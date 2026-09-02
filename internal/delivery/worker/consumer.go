@@ -2,10 +2,18 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
+
+// ErrConnectionLost indica que el canal de deliveries se cerro sin
+// que el contexto estuviera cancelado: el broker o la conexion
+// cayeron. Quien orquesta el ciclo de vida del consumer (RunWithReconnect)
+// usa esta distincion para decidir si debe reconectar o si el retorno
+// de Run responde a un apagado pedido.
+var ErrConnectionLost = errors.New("se perdio la conexion con rabbitmq")
 
 // messageHandler decide que hacer con el cuerpo crudo de un delivery.
 // AlertCreatedHandler y SessionsRevokedHandler implementan esta misma
@@ -42,7 +50,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 			return nil
 		case delivery, ok := <-deliveries:
 			if !ok {
-				return nil
+				if ctx.Err() != nil {
+					return nil
+				}
+				return ErrConnectionLost
 			}
 			c.process(ctx, delivery)
 		}
