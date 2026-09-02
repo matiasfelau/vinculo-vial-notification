@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +24,10 @@ import (
 )
 
 const shutdownTimeout = 10 * time.Second
+
+// exitFunc se indirecciona para poder testear runWorker sin terminar
+// el proceso de pruebas.
+var exitFunc = os.Exit
 
 func main() {
 	cfg, err := config.Load()
@@ -57,18 +63,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	amqpConn, err := amqp.Dial(cfg.RabbitMQURL)
-	if err != nil {
-		log.Fatalf("no se pudo conectar a rabbitmq: %v", err)
-	}
-	defer amqpConn.Close()
-
-	amqpChannel, err := amqpConn.Channel()
-	if err != nil {
-		log.Fatalf("no se pudo abrir el canal de rabbitmq: %v", err)
-	}
-	defer amqpChannel.Close()
-
 	messagingClient, err := fcm.NewMessagingClient(context.Background(), cfg.FirebaseCredentialsJSON)
 	if err != nil {
 		log.Fatalf("no se pudo inicializar el cliente de firebase: %v", err)
@@ -76,25 +70,26 @@ func main() {
 	fcmDispatcher := fcm.NewDispatcher(messagingClient, cfg.FCMBatchSize)
 
 	dispatchAlertService := dispatch.NewDispatchAlertService(notificationLogRepository, deviceTokenRepository, fcmDispatcher)
-	deadLetterPublisher := deliveryworker.NewAMQPDeadLetterPublisher(amqpChannel)
-	alertCreatedHandler := deliveryworker.NewAlertCreatedHandler(dispatchAlertService, deadLetterPublisher, int64(cfg.MaxRetries))
-	alertCreatedConsumer := deliveryworker.NewConsumer(amqpChannel, cfg.AlertQueue, alertCreatedHandler)
-
 	revokeSessionsService := sessions.NewRevokeSessionsService(notificationLogRepository, deviceTokenRepository)
-	sessionsRevokedHandler := deliveryworker.NewSessionsRevokedHandler(revokeSessionsService, deadLetterPublisher, int64(cfg.MaxRetries))
-	sessionsRevokedConsumer := deliveryworker.NewConsumer(amqpChannel, cfg.SessionsRevokedQueue, sessionsRevokedHandler)
 
-	go func() {
-		if err := alertCreatedConsumer.Run(ctx); err != nil {
-			log.Fatalf("el worker de alert.created termino con un error: %v", err)
-		}
-	}()
+	var workers sync.WaitGroup
+	workers.Add(2)
 
-	go func() {
-		if err := sessionsRevokedConsumer.Run(ctx); err != nil {
-			log.Fatalf("el worker de user.sessions.revoked termino con un error: %v", err)
-		}
-	}()
+	go runWorker(&workers, "alert.created", func() {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, func(channel *amqp.Channel) *deliveryworker.Consumer {
+			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
+			handler := deliveryworker.NewAlertCreatedHandler(dispatchAlertService, deadLetters, int64(cfg.MaxRetries))
+			return deliveryworker.NewConsumer(channel, cfg.AlertQueue, handler)
+		})
+	})
+
+	go runWorker(&workers, "user.sessions.revoked", func() {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.SessionsRevokedQueue, func(channel *amqp.Channel) *deliveryworker.Consumer {
+			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
+			handler := deliveryworker.NewSessionsRevokedHandler(revokeSessionsService, deadLetters, int64(cfg.MaxRetries))
+			return deliveryworker.NewConsumer(channel, cfg.SessionsRevokedQueue, handler)
+		})
+	})
 
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -124,4 +119,24 @@ func main() {
 
 		log.Println("servidor http detenido correctamente")
 	}
+
+	log.Println("esperando a que los workers terminen el mensaje en vuelo")
+	workers.Wait()
+	log.Println("workers detenidos correctamente")
+}
+
+// runWorker ejecuta run y garantiza que un panico dentro del worker
+// termine el proceso completo con codigo distinto de cero. Un
+// contenedor que sigue respondiendo HTTP pero dejo de consumir la
+// cola es el peor estado posible: parece sano y no notifica a nadie.
+func runWorker(wg *sync.WaitGroup, name string, run func()) {
+	defer wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panico en el worker de %s, terminando el proceso: %v", name, r)
+			exitFunc(1)
+		}
+	}()
+
+	run()
 }
