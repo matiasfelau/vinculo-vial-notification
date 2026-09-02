@@ -57,9 +57,9 @@ func TestAlertCreatedHandler_ProcesaUnEventoValido_Ack(t *testing.T) {
 
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewAlertCreatedHandler(service, deadLetters)
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
-	outcome := handler.Handle(context.Background(), validEnvelope(uuid.New().String(), ownerID.String()))
+	outcome := handler.Handle(context.Background(), validEnvelope(uuid.New().String(), ownerID.String()), 0)
 
 	if outcome != OutcomeAck {
 		t.Fatalf("Outcome = %v, se esperaba OutcomeAck", outcome)
@@ -72,10 +72,10 @@ func TestAlertCreatedHandler_ProcesaUnEventoValido_Ack(t *testing.T) {
 func TestAlertCreatedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewAlertCreatedHandler(service, deadLetters)
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
 	body := []byte(`{esto no es json valido`)
-	outcome := handler.Handle(context.Background(), body)
+	outcome := handler.Handle(context.Background(), body, 0)
 
 	if outcome != OutcomeAck {
 		t.Fatalf("Outcome = %v, se esperaba OutcomeAck", outcome)
@@ -91,14 +91,14 @@ func TestAlertCreatedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
 func TestAlertCreatedHandler_PayloadSinOwnerIDs_AckYDLQ(t *testing.T) {
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewAlertCreatedHandler(service, deadLetters)
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
 	body := []byte(`{
 		"eventId": "11111111-1111-1111-1111-111111111111",
 		"eventType": "alert.created",
 		"payload": {"owner_ids": [], "alert_type": "choque"}
 	}`)
-	outcome := handler.Handle(context.Background(), body)
+	outcome := handler.Handle(context.Background(), body, 0)
 
 	if outcome != OutcomeAck {
 		t.Fatalf("Outcome = %v, se esperaba OutcomeAck", outcome)
@@ -115,9 +115,9 @@ func TestAlertCreatedHandler_FalloTransitorioDelDispatcher_NackSinRequeue(t *tes
 
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewAlertCreatedHandler(service, deadLetters)
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
-	outcome := handler.Handle(context.Background(), validEnvelope(uuid.New().String(), ownerID.String()))
+	outcome := handler.Handle(context.Background(), validEnvelope(uuid.New().String(), ownerID.String()), 0)
 
 	if outcome != OutcomeNackNoRequeue {
 		t.Fatalf("Outcome = %v, se esperaba OutcomeNackNoRequeue", outcome)
@@ -133,14 +133,57 @@ func TestAlertCreatedHandler_RedeliveryDelMismoEvento_Ack(t *testing.T) {
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{})
-	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{})
+	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{}, 3)
 
 	body := validEnvelope(uuid.New().String(), ownerID.String())
 
-	first := handler.Handle(context.Background(), body)
-	second := handler.Handle(context.Background(), body)
+	first := handler.Handle(context.Background(), body, 0)
+	second := handler.Handle(context.Background(), body, 0)
 
 	if first != OutcomeAck || second != OutcomeAck {
 		t.Fatalf("ambos intentos deberian confirmarse: primero=%v segundo=%v", first, second)
+	}
+}
+
+func TestAlertCreatedHandler_FalloTransitorioBajoElLimite_NackSinRequeue(t *testing.T) {
+	deviceTokens := memory.NewDeviceTokenRepository()
+	ownerID := uuid.New()
+	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
+
+	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	deadLetters := &fakeDeadLetterPublisher{}
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
+
+	body := validEnvelope(uuid.New().String(), ownerID.String())
+	outcome := handler.Handle(context.Background(), body, 2)
+
+	if outcome != OutcomeNackNoRequeue {
+		t.Fatalf("Outcome = %v, se esperaba OutcomeNackNoRequeue con retries (2) por debajo de maxRetries (3)", outcome)
+	}
+	if len(deadLetters.published) != 0 {
+		t.Fatalf("no deberia haberse publicado a la dlq todavia, se publicaron %d mensajes", len(deadLetters.published))
+	}
+}
+
+func TestAlertCreatedHandler_SuperaMaxRetries_AckYDLQ(t *testing.T) {
+	deviceTokens := memory.NewDeviceTokenRepository()
+	ownerID := uuid.New()
+	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
+
+	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	deadLetters := &fakeDeadLetterPublisher{}
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
+
+	body := validEnvelope(uuid.New().String(), ownerID.String())
+	outcome := handler.Handle(context.Background(), body, 3)
+
+	if outcome != OutcomeAck {
+		t.Fatalf("Outcome = %v, se esperaba OutcomeAck al superar maxRetries", outcome)
+	}
+	if len(deadLetters.published) != 1 {
+		t.Fatalf("se esperaba un mensaje publicado a la dlq al superar maxRetries, se publicaron %d", len(deadLetters.published))
+	}
+	if string(deadLetters.published[0]) != string(body) {
+		t.Errorf("el cuerpo publicado a la dlq no coincide con el original")
 	}
 }
