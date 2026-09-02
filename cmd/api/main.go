@@ -16,6 +16,7 @@ import (
 	deliveryworker "github.com/matiasfelau/vinculo-vial-notification/internal/delivery/worker"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/repository/postgres"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/dispatch"
+	"github.com/matiasfelau/vinculo-vial-notification/internal/service/sessions"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/tokens"
 	"github.com/matiasfelau/vinculo-vial-notification/pkg/config"
 )
@@ -77,11 +78,21 @@ func main() {
 	dispatchAlertService := dispatch.NewDispatchAlertService(notificationLogRepository, deviceTokenRepository, fcmDispatcher)
 	deadLetterPublisher := deliveryworker.NewAMQPDeadLetterPublisher(amqpChannel)
 	alertCreatedHandler := deliveryworker.NewAlertCreatedHandler(dispatchAlertService, deadLetterPublisher, int64(cfg.MaxRetries))
-	alertCreatedConsumer := deliveryworker.NewAlertCreatedConsumer(amqpChannel, cfg.AlertQueue, alertCreatedHandler)
+	alertCreatedConsumer := deliveryworker.NewConsumer(amqpChannel, cfg.AlertQueue, alertCreatedHandler)
+
+	revokeSessionsService := sessions.NewRevokeSessionsService(notificationLogRepository, deviceTokenRepository)
+	sessionsRevokedHandler := deliveryworker.NewSessionsRevokedHandler(revokeSessionsService, deadLetterPublisher, int64(cfg.MaxRetries))
+	sessionsRevokedConsumer := deliveryworker.NewConsumer(amqpChannel, cfg.SessionsRevokedQueue, sessionsRevokedHandler)
 
 	go func() {
 		if err := alertCreatedConsumer.Run(ctx); err != nil {
 			log.Fatalf("el worker de alert.created termino con un error: %v", err)
+		}
+	}()
+
+	go func() {
+		if err := sessionsRevokedConsumer.Run(ctx); err != nil {
+			log.Fatalf("el worker de user.sessions.revoked termino con un error: %v", err)
 		}
 	}()
 

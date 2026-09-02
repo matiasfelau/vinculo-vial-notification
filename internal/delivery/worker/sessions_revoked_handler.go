@@ -1,0 +1,67 @@
+package worker
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/google/uuid"
+
+	"github.com/matiasfelau/vinculo-vial-notification/internal/service/sessions"
+)
+
+// SessionsRevokedHandler decide, a partir del cuerpo crudo del
+// mensaje, que corresponde hacer con el delivery de
+// user.sessions.revoked. No conoce el canal AMQP.
+type SessionsRevokedHandler struct {
+	revokeService *sessions.RevokeSessionsService
+	deadLetters   deadLetterPublisher
+	maxRetries    int64
+}
+
+func NewSessionsRevokedHandler(revokeService *sessions.RevokeSessionsService, deadLetters deadLetterPublisher, maxRetries int64) *SessionsRevokedHandler {
+	return &SessionsRevokedHandler{revokeService: revokeService, deadLetters: deadLetters, maxRetries: maxRetries}
+}
+
+var _ messageHandler = (*SessionsRevokedHandler)(nil)
+
+func (h *SessionsRevokedHandler) Handle(ctx context.Context, body []byte, retries int64) Outcome {
+	envelope, err := ParseEnvelope(body)
+	if err != nil {
+		h.sendToDeadLetter(ctx, body, err)
+		return OutcomeAck
+	}
+
+	ownerID, err := uuid.Parse(envelope.Actor)
+	if err != nil {
+		h.sendToDeadLetter(ctx, body, fmt.Errorf("actor invalido: %w", err))
+		return OutcomeAck
+	}
+
+	if _, err := parseSessionsRevokedPayload(envelope.Payload); err != nil {
+		h.sendToDeadLetter(ctx, body, err)
+		return OutcomeAck
+	}
+
+	event := sessions.SessionsRevokedEvent{EventID: envelope.EventID, OwnerID: ownerID}
+
+	if err := h.revokeService.Execute(ctx, event); err != nil {
+		if retries >= h.maxRetries {
+			log.Printf("se supero MAX_RETRIES (%d) procesando la revocacion del evento %s, se descarta a la dlq: %v", h.maxRetries, envelope.EventID, err)
+			h.sendToDeadLetter(ctx, body, err)
+			return OutcomeAck
+		}
+
+		log.Printf("fallo transitorio procesando la revocacion del evento %s (intento %d de %d): %v", envelope.EventID, retries+1, h.maxRetries, err)
+		return OutcomeNackNoRequeue
+	}
+
+	return OutcomeAck
+}
+
+func (h *SessionsRevokedHandler) sendToDeadLetter(ctx context.Context, body []byte, cause error) {
+	log.Printf("evento de revocacion de sesiones invalido, se descarta a la dlq: %v", cause)
+	if err := h.deadLetters.PublishToDLQ(ctx, body, cause.Error()); err != nil {
+		log.Printf("no se pudo publicar a la dlq: %v", err)
+	}
+}

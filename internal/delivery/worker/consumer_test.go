@@ -46,7 +46,7 @@ func TestAlertCreatedConsumer_ProcessConfirmaUnEventoValido(t *testing.T) {
 
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{})
 	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{}, 3)
-	consumer := NewAlertCreatedConsumer(nil, "notification.alert-created.q", handler)
+	consumer := NewConsumer(nil, "notification.alert-created.q", handler)
 
 	ack := &fakeAcknowledger{}
 	delivery := amqp.Delivery{
@@ -69,7 +69,7 @@ func TestAlertCreatedConsumer_ProcessRechazaSinRequeueAnteFalloTransitorio(t *te
 
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
 	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{}, 3)
-	consumer := NewAlertCreatedConsumer(nil, "notification.alert-created.q", handler)
+	consumer := NewConsumer(nil, "notification.alert-created.q", handler)
 
 	ack := &fakeAcknowledger{}
 	delivery := amqp.Delivery{
@@ -95,7 +95,7 @@ func TestAlertCreatedConsumer_ProcessConfirmaYDescartaEnvelopeInvalido(t *testin
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
-	consumer := NewAlertCreatedConsumer(nil, "notification.alert-created.q", handler)
+	consumer := NewConsumer(nil, "notification.alert-created.q", handler)
 
 	ack := &fakeAcknowledger{}
 	delivery := amqp.Delivery{
@@ -124,7 +124,7 @@ func TestAlertCreatedConsumer_ProcessLeeXDeathYCortaAlSuperarMaxRetries(t *testi
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
-	consumer := NewAlertCreatedConsumer(nil, queue, handler)
+	consumer := NewConsumer(nil, queue, handler)
 
 	ack := &fakeAcknowledger{}
 	delivery := amqp.Delivery{
