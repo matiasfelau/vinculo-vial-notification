@@ -76,7 +76,7 @@ func main() {
 
 	dispatchAlertService := dispatch.NewDispatchAlertService(notificationLogRepository, deviceTokenRepository, fcmDispatcher)
 	deadLetterPublisher := deliveryworker.NewAMQPDeadLetterPublisher(amqpChannel)
-	alertCreatedHandler := deliveryworker.NewAlertCreatedHandler(dispatchAlertService, deadLetterPublisher)
+	alertCreatedHandler := deliveryworker.NewAlertCreatedHandler(dispatchAlertService, deadLetterPublisher, int64(cfg.MaxRetries))
 	alertCreatedConsumer := deliveryworker.NewAlertCreatedConsumer(amqpChannel, cfg.AlertQueue, alertCreatedHandler)
 
 	go func() {

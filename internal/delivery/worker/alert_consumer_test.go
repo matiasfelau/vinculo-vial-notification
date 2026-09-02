@@ -45,7 +45,7 @@ func TestAlertCreatedConsumer_ProcessConfirmaUnEventoValido(t *testing.T) {
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{})
-	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{})
+	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{}, 3)
 	consumer := NewAlertCreatedConsumer(nil, "notification.alert-created.q", handler)
 
 	ack := &fakeAcknowledger{}
@@ -68,7 +68,7 @@ func TestAlertCreatedConsumer_ProcessRechazaSinRequeueAnteFalloTransitorio(t *te
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
-	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{})
+	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{}, 3)
 	consumer := NewAlertCreatedConsumer(nil, "notification.alert-created.q", handler)
 
 	ack := &fakeAcknowledger{}
@@ -94,7 +94,7 @@ func TestAlertCreatedConsumer_ProcessRechazaSinRequeueAnteFalloTransitorio(t *te
 func TestAlertCreatedConsumer_ProcessConfirmaYDescartaEnvelopeInvalido(t *testing.T) {
 	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewAlertCreatedHandler(service, deadLetters)
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 	consumer := NewAlertCreatedConsumer(nil, "notification.alert-created.q", handler)
 
 	ack := &fakeAcknowledger{}
@@ -108,6 +108,40 @@ func TestAlertCreatedConsumer_ProcessConfirmaYDescartaEnvelopeInvalido(t *testin
 
 	if len(ack.acked) != 1 || ack.acked[0] != 3 {
 		t.Fatalf("se esperaba Ack(3), se obtuvo acked=%v nacked=%v", ack.acked, ack.nacked)
+	}
+	if len(deadLetters.published) != 1 {
+		t.Fatalf("se esperaba un mensaje publicado a la dlq, se publicaron %d", len(deadLetters.published))
+	}
+}
+
+func TestAlertCreatedConsumer_ProcessLeeXDeathYCortaAlSuperarMaxRetries(t *testing.T) {
+	const queue = "notification.alert-created.q"
+
+	deviceTokens := memory.NewDeviceTokenRepository()
+	ownerID := uuid.New()
+	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
+
+	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	deadLetters := &fakeDeadLetterPublisher{}
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
+	consumer := NewAlertCreatedConsumer(nil, queue, handler)
+
+	ack := &fakeAcknowledger{}
+	delivery := amqp.Delivery{
+		Acknowledger: ack,
+		DeliveryTag:  9,
+		Body:         validEnvelope(uuid.New().String(), ownerID.String()),
+		Headers: amqp.Table{
+			"x-death": []interface{}{
+				amqp.Table{"queue": queue, "reason": "rejected", "count": int64(3)},
+			},
+		},
+	}
+
+	consumer.process(context.Background(), delivery)
+
+	if len(ack.acked) != 1 || ack.acked[0] != 9 {
+		t.Fatalf("se esperaba Ack(9) al superar maxRetries, se obtuvo acked=%v nacked=%v", ack.acked, ack.nacked)
 	}
 	if len(deadLetters.published) != 1 {
 		t.Fatalf("se esperaba un mensaje publicado a la dlq, se publicaron %d", len(deadLetters.published))

@@ -43,7 +43,9 @@ func (c *AlertCreatedConsumer) Run(ctx context.Context) error {
 }
 
 func (c *AlertCreatedConsumer) process(ctx context.Context, delivery amqp.Delivery) {
-	switch c.handler.Handle(ctx, delivery.Body) {
+	retries := deathCount(delivery.Headers, c.queue)
+
+	switch c.handler.Handle(ctx, delivery.Body, retries) {
 	case OutcomeAck:
 		if err := delivery.Ack(false); err != nil {
 			log.Printf("no se pudo confirmar el mensaje de alert.created: %v", err)
