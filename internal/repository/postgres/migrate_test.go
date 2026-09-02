@@ -1,6 +1,8 @@
 package postgres
 
 import (
+	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -8,14 +10,22 @@ import (
 	"gorm.io/gorm"
 )
 
-// openTestDB abre una base en memoria para validar el esquema sin
-// depender de una instancia real de Postgres. El driver es puro Go
-// (sin cgo) para no requerir un compilador de C en el entorno de
-// pruebas.
+var testDBCounter atomic.Int64
+
+// openTestDB abre una base en memoria, aislada por test, para validar
+// el esquema y las consultas sin depender de una instancia real de
+// Postgres. El driver es puro Go (sin cgo) para no requerir un
+// compilador de C en el entorno de pruebas.
+//
+// El nombre de la base debe ser unico por llamada: "cache=shared" con
+// un DSN identico hace que SQLite reutilice la misma base en memoria
+// entre tests distintos del mismo binario, filtrando filas de un test
+// a otro.
 func openTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+	dsn := fmt.Sprintf("file:testdb_%d?mode=memory&cache=shared", testDBCounter.Add(1))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		TranslateError: true,
 	})
 	if err != nil {
