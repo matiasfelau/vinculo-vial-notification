@@ -34,3 +34,28 @@ func (r *NotificationLogRepository) Register(_ context.Context, log *domain.Noti
 	r.logs[log.EventID] = *log
 	return nil
 }
+
+// Get expone el estado actual de un registro. Pensado para inspeccion
+// desde pruebas de otros paquetes; no forma parte de la interfaz de
+// dominio.
+func (r *NotificationLogRepository) Get(eventID uuid.UUID) (domain.NotificationLog, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entry, ok := r.logs[eventID]
+	return entry, ok
+}
+
+func (r *NotificationLogRepository) UpdateStatus(_ context.Context, eventID uuid.UUID, status domain.NotificationStatus) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entry, exists := r.logs[eventID]
+	if !exists {
+		return nil
+	}
+
+	entry.Status = status
+	r.logs[eventID] = entry
+	return nil
+}

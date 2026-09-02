@@ -28,6 +28,25 @@ func TestNotificationLogRepository_MismoEventIDEntregadoDosVeces_SoloUnDespacho(
 	}
 }
 
+func TestNotificationLogRepository_UpdateStatusActualizaElRegistroExistente(t *testing.T) {
+	repo := NewNotificationLogRepository()
+	ctx := context.Background()
+
+	eventID := uuid.New()
+	log := &domain.NotificationLog{ID: uuid.New(), EventID: eventID, Status: domain.StatusFailed, CreatedAt: time.Now()}
+	if err := repo.Register(ctx, log); err != nil {
+		t.Fatalf("Register() devolvio un error inesperado: %v", err)
+	}
+
+	if err := repo.UpdateStatus(ctx, eventID, domain.StatusSent); err != nil {
+		t.Fatalf("UpdateStatus() devolvio un error inesperado: %v", err)
+	}
+
+	if repo.logs[eventID].Status != domain.StatusSent {
+		t.Fatalf("Status = %q, se esperaba %q", repo.logs[eventID].Status, domain.StatusSent)
+	}
+}
+
 func TestNotificationLogRepository_EventosDistintosSeRegistranPorSeparado(t *testing.T) {
 	repo := NewNotificationLogRepository()
 	ctx := context.Background()

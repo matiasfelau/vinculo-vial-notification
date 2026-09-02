@@ -41,5 +41,13 @@ type NotificationLogRepository interface {
 	// Register intenta insertar el registro de forma atomica contra el
 	// constraint UNIQUE de event_id. Si el evento ya fue registrado,
 	// devuelve ErrEventAlreadyProcessed sin alterar la fila existente.
+	//
+	// El status con el que se inserta es provisorio: el llamador aun
+	// no conoce el resultado del despacho en este punto del flujo. Se
+	// actualiza luego con UpdateStatus una vez conocido.
 	Register(ctx context.Context, log *NotificationLog) error
+
+	// UpdateStatus actualiza el status final de un registro ya
+	// insertado, identificado por su event_id.
+	UpdateStatus(ctx context.Context, eventID uuid.UUID, status NotificationStatus) error
 }
