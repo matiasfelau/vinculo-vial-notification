@@ -27,9 +27,12 @@ type DeviceTokenRepository interface {
 	// duplicar la fila.
 	Upsert(ctx context.Context, token *DeviceToken) error
 
-	// Delete da de baja un token por su valor. No es un error que el
-	// token no exista: la operacion es idempotente.
-	Delete(ctx context.Context, fcmToken string) error
+	// Delete da de baja un token de un owner puntual. No es un error
+	// que el token no exista, ni que exista pero pertenezca a otro
+	// owner: en ambos casos la operacion es un no-op exitoso. El
+	// alcance por owner evita que un usuario de baja el token de otro
+	// conociendo su valor.
+	Delete(ctx context.Context, ownerID uuid.UUID, fcmToken string) error
 
 	// FindByOwnerIDs devuelve, en una unica consulta, los tokens de
 	// todos los owner_ids indicados.
