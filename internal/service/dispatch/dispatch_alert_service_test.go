@@ -13,10 +13,13 @@ import (
 )
 
 // fakeDispatcher registra cada llamada para poder verificar cuantas
-// veces se disparo el envio y con que tokens.
+// veces se disparo el envio y con que tokens. Los tokens listados en
+// invalidTokens se devuelven marcados como Invalid, simulando una
+// respuesta Unregistered o InvalidArgument de FCM.
 type fakeDispatcher struct {
-	calls [][]string
-	err   error
+	calls         [][]string
+	err           error
+	invalidTokens map[string]bool
 }
 
 func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, _ string) ([]domain.DispatchOutcome, error) {
@@ -27,7 +30,8 @@ func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, _ string) 
 
 	outcomes := make([]domain.DispatchOutcome, len(tokens))
 	for i, token := range tokens {
-		outcomes[i] = domain.DispatchOutcome{Token: token, Success: true}
+		invalid := f.invalidTokens[token]
+		outcomes[i] = domain.DispatchOutcome{Token: token, Success: !invalid, Invalid: invalid}
 	}
 	return outcomes, nil
 }
@@ -140,5 +144,49 @@ func TestDispatchAlertService_PropagaElErrorDelDispatcherYNoMarcaSent(t *testing
 	}
 	if stored.Status == domain.StatusSent {
 		t.Fatalf("el status no deberia haberse marcado como SENT tras un fallo del dispatcher")
+	}
+}
+
+func TestDispatchAlertService_BorraLosTokensInvalidosReportadosPorFCM(t *testing.T) {
+	service, deviceTokens, _, dispatcher := setup()
+	ctx := context.Background()
+
+	owner := uuid.New()
+	_ = deviceTokens.Upsert(ctx, &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-valido", UpdatedAt: time.Now()})
+	_ = deviceTokens.Upsert(ctx, &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-invalido", UpdatedAt: time.Now()})
+	dispatcher.invalidTokens = map[string]bool{"token-invalido": true}
+
+	event := AlertCreatedEvent{EventID: uuid.New(), OwnerIDs: []uuid.UUID{owner}, AlertType: "choque"}
+	if err := service.Execute(ctx, event); err != nil {
+		t.Fatalf("Execute() devolvio un error inesperado: %v", err)
+	}
+
+	restantes, err := deviceTokens.FindByOwnerIDs(ctx, []uuid.UUID{owner})
+	if err != nil {
+		t.Fatalf("FindByOwnerIDs() devolvio un error inesperado: %v", err)
+	}
+	if len(restantes) != 1 || restantes[0].FCMToken != "token-valido" {
+		t.Fatalf("se esperaba que solo sobreviviera token-valido, se obtuvo: %+v", restantes)
+	}
+}
+
+func TestDispatchAlertService_SinTokensInvalidos_NoBorraNada(t *testing.T) {
+	service, deviceTokens, _, _ := setup()
+	ctx := context.Background()
+
+	owner := uuid.New()
+	_ = deviceTokens.Upsert(ctx, &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1", UpdatedAt: time.Now()})
+
+	event := AlertCreatedEvent{EventID: uuid.New(), OwnerIDs: []uuid.UUID{owner}, AlertType: "choque"}
+	if err := service.Execute(ctx, event); err != nil {
+		t.Fatalf("Execute() devolvio un error inesperado: %v", err)
+	}
+
+	restantes, err := deviceTokens.FindByOwnerIDs(ctx, []uuid.UUID{owner})
+	if err != nil {
+		t.Fatalf("FindByOwnerIDs() devolvio un error inesperado: %v", err)
+	}
+	if len(restantes) != 1 {
+		t.Fatalf("no deberia haberse borrado ningun token, se obtuvo: %+v", restantes)
 	}
 }

@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,9 +76,37 @@ func (s *DispatchAlertService) Execute(ctx context.Context, event AlertCreatedEv
 		fcmTokens[i] = token.FCMToken
 	}
 
-	if _, err := s.dispatcher.Dispatch(ctx, fcmTokens, event.AlertType); err != nil {
+	outcomes, err := s.dispatcher.Dispatch(ctx, fcmTokens, event.AlertType)
+	if err != nil {
 		return err
 	}
 
+	s.cleanupInvalidTokens(ctx, outcomes)
+
 	return s.notificationLogs.UpdateStatus(ctx, event.EventID, domain.StatusSent)
+}
+
+// cleanupInvalidTokens borra los tokens que FCM reporto como
+// Unregistered o InvalidArgument (limpieza autonoma). Es
+// deliberadamente best-effort: el evento ya quedo registrado en el
+// paso de deduplicacion, asi que un redelivery posterior no
+// reintentaria esta limpieza (se descartaria como evento ya
+// procesado). Fallar el evento completo por esto forzaria un NACK
+// que nunca repetiria la limpieza y perderia el resultado del
+// despacho, que si tuvo exito.
+func (s *DispatchAlertService) cleanupInvalidTokens(ctx context.Context, outcomes []domain.DispatchOutcome) {
+	var invalidTokens []string
+	for _, outcome := range outcomes {
+		if outcome.Invalid {
+			invalidTokens = append(invalidTokens, outcome.Token)
+		}
+	}
+
+	if len(invalidTokens) == 0 {
+		return
+	}
+
+	if err := s.deviceTokens.DeleteByTokens(ctx, invalidTokens); err != nil {
+		log.Printf("no se pudieron eliminar los tokens invalidos reportados por fcm: %v", err)
+	}
 }
