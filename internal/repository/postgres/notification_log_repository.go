@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -50,4 +51,11 @@ func (r *NotificationLogRepository) Register(ctx context.Context, log *domain.No
 	}
 
 	return nil
+}
+
+func (r *NotificationLogRepository) UpdateStatus(ctx context.Context, eventID uuid.UUID, status domain.NotificationStatus) error {
+	return r.db.WithContext(ctx).
+		Model(&NotificationLogModel{}).
+		Where("event_id = ?", eventID).
+		Update("status", string(status)).Error
 }
