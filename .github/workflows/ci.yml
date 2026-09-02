@@ -18,6 +18,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Descargar y verificar dependencias
+        run: |
+          go mod download
+          go mod verify
+
       - name: Compilar
         run: go build ./...
 
