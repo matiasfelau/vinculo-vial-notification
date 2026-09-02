@@ -10,6 +10,8 @@ import (
 	"time"
 
 	deliveryhttp "github.com/matiasfelau/vinculo-vial-notification/internal/delivery/http"
+	"github.com/matiasfelau/vinculo-vial-notification/internal/repository/postgres"
+	"github.com/matiasfelau/vinculo-vial-notification/internal/service/tokens"
 	"github.com/matiasfelau/vinculo-vial-notification/pkg/config"
 )
 
@@ -21,7 +23,23 @@ func main() {
 		log.Fatalf("configuracion invalida: %v", err)
 	}
 
+	db, err := postgres.Connect(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("no se pudo conectar a la base de datos: %v", err)
+	}
+
+	if err := postgres.AutoMigrate(db); err != nil {
+		log.Fatalf("no se pudo migrar el esquema: %v", err)
+	}
+
+	deviceTokenRepository := postgres.NewDeviceTokenRepository(db)
+	tokenHandler := deliveryhttp.NewTokenHandler(
+		tokens.NewRegisterTokenService(deviceTokenRepository),
+		tokens.NewDeleteTokenService(deviceTokenRepository),
+	)
+
 	router := deliveryhttp.NewRouter()
+	deliveryhttp.RegisterTokenRoutes(router, tokenHandler, deliveryhttp.NewDailyRateLimiter())
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: router,
