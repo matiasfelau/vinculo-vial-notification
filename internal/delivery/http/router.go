@@ -12,14 +12,13 @@ func NewRouter() *gin.Engine {
 	return router
 }
 
-// RegisterTokenRoutes agrega el alta y la baja de tokens FCM. El POST
-// esta sujeto al limite diario por usuario; el DELETE no se limita,
-// dado que bloquear una baja deja al dispositivo recibiendo
-// notificaciones que ya no le corresponden.
-func RegisterTokenRoutes(router *gin.Engine, handler *TokenHandler, rateLimiter *DailyRateLimiter) {
+// RegisterTokenRoutes agrega el alta y la baja de tokens FCM. El
+// limite diario de altas por usuario lo aplica Kong, no este
+// servicio.
+func RegisterTokenRoutes(router *gin.Engine, handler *TokenHandler) {
 	tokens := router.Group("/api/v1/notifications/tokens")
 	tokens.Use(OwnerIDMiddleware())
 
-	tokens.POST("", rateLimiter.Middleware(), handler.Register)
+	tokens.POST("", handler.Register)
 	tokens.DELETE("", handler.Delete)
 }

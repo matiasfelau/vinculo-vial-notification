@@ -22,7 +22,7 @@ func newTestRouter() (*gin.Engine, *memory.DeviceTokenRepository) {
 	handler := NewTokenHandler(tokens.NewRegisterTokenService(repo), tokens.NewDeleteTokenService(repo))
 
 	router := NewRouter()
-	RegisterTokenRoutes(router, handler, NewDailyRateLimiter())
+	RegisterTokenRoutes(router, handler)
 
 	return router, repo
 }
@@ -82,23 +82,6 @@ func TestTokenHandler_RegisterSinFCMTokenDevuelveBadRequest(t *testing.T) {
 	}
 }
 
-func TestTokenHandler_RegisterSuperaElLimiteDiario(t *testing.T) {
-	router, _ := newTestRouter()
-	owner := uuid.New().String()
-
-	for i := 0; i < dailyTokenRegistrationLimit; i++ {
-		rec := doTokenRequest(router, http.MethodPost, owner, "token-repetido")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("intento %d: codigo de estado = %d, se esperaba %d", i+1, rec.Code, http.StatusOK)
-		}
-	}
-
-	rec := doTokenRequest(router, http.MethodPost, owner, "token-repetido")
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("codigo de estado = %d, se esperaba %d", rec.Code, http.StatusTooManyRequests)
-	}
-}
-
 func TestTokenHandler_DeleteDeUnTokenInexistenteDevuelveOK(t *testing.T) {
 	router, _ := newTestRouter()
 	owner := uuid.New().String()
@@ -107,18 +90,6 @@ func TestTokenHandler_DeleteDeUnTokenInexistenteDevuelveOK(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("codigo de estado = %d, se esperaba %d", rec.Code, http.StatusOK)
-	}
-}
-
-func TestTokenHandler_DeleteNoEstaSujetoAlLimiteDiario(t *testing.T) {
-	router, _ := newTestRouter()
-	owner := uuid.New().String()
-
-	for i := 0; i < dailyTokenRegistrationLimit+5; i++ {
-		rec := doTokenRequest(router, http.MethodDelete, owner, "token-x")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("intento %d: codigo de estado = %d, se esperaba %d", i+1, rec.Code, http.StatusOK)
-		}
 	}
 }
 

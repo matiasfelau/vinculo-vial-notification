@@ -53,7 +53,7 @@ func main() {
 	)
 
 	router := deliveryhttp.NewRouter()
-	deliveryhttp.RegisterTokenRoutes(router, tokenHandler, deliveryhttp.NewDailyRateLimiter())
+	deliveryhttp.RegisterTokenRoutes(router, tokenHandler)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
