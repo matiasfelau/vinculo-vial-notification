@@ -10,10 +10,11 @@ import (
 )
 
 // NewMessagingClient inicializa el Admin SDK de Firebase a partir del
-// JSON de credenciales del service account, inyectado por variable de
-// entorno, y devuelve el cliente de Messaging.
-func NewMessagingClient(ctx context.Context, credentialsJSON string) (*messaging.Client, error) {
-	app, err := firebase.NewApp(ctx, nil, option.WithCredentialsJSON([]byte(credentialsJSON)))
+// archivo de credenciales del service account, montado en el
+// contenedor por fuera de la imagen, y devuelve el cliente de
+// Messaging.
+func NewMessagingClient(ctx context.Context, credentialsPath string) (*messaging.Client, error) {
+	app, err := firebase.NewApp(ctx, nil, option.WithCredentialsFile(credentialsPath))
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo inicializar la app de firebase: %w", err)
 	}

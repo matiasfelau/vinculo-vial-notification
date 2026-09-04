@@ -3,6 +3,7 @@ CLAUDE.md
 
 .env
 .env.local
+firebase-credentials.json
 
 /bin/
 /dist/

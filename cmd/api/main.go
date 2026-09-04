@@ -63,7 +63,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	messagingClient, err := fcm.NewMessagingClient(context.Background(), cfg.FirebaseCredentialsJSON)
+	messagingClient, err := fcm.NewMessagingClient(context.Background(), cfg.FirebaseCredentialsPath)
 	if err != nil {
 		log.Fatalf("no se pudo inicializar el cliente de firebase: %v", err)
 	}

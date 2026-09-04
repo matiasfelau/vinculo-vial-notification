@@ -8,6 +8,8 @@ services:
       - .env
     ports:
       - "${PORT:-8080}:8080"
+    volumes:
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
     networks:
       - vinculo-vial
       - notification-internal

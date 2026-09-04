@@ -18,7 +18,7 @@ type Config struct {
 	AlertQueue              string
 	SessionsRevokedQueue    string
 	MaxRetries              int
-	FirebaseCredentialsJSON string
+	FirebaseCredentialsPath string
 	FCMBatchSize            int
 }
 
@@ -44,7 +44,7 @@ func Load() (*Config, error) {
 		AlertQueue:              getEnv("ALERT_QUEUE", "notification.alert-created.q"),
 		SessionsRevokedQueue:    getEnv("SESSIONS_REVOKED_QUEUE", "notification.sessions-revoked.q"),
 		MaxRetries:              maxRetries,
-		FirebaseCredentialsJSON: os.Getenv("FIREBASE_CREDENTIALS_JSON"),
+		FirebaseCredentialsPath: os.Getenv("FIREBASE_CREDENTIALS_PATH"),
 		FCMBatchSize:            fcmBatchSize,
 	}, nil
 }
