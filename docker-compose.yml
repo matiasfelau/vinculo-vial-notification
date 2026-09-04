@@ -1,0 +1,44 @@
+services:
+  notification:
+    container_name: vinculo-vial-notification
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    networks:
+      - vinculo-vial
+      - notification-internal
+    depends_on:
+      notification-db:
+        condition: service_healthy
+
+  notification-db:
+    container_name: vinculo-vial-notification-db
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - notification-db-data:/var/lib/postgresql/data
+    networks:
+      - notification-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+networks:
+  vinculo-vial:
+    external: true
+  notification-internal:
+    driver: bridge
+
+volumes:
+  notification-db-data:

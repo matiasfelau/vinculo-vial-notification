@@ -1,0 +1,42 @@
+name: build-test-release
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar codigo fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Descargar y verificar dependencias
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Compilar
+        run: go build ./...
+
+      - name: Verificar formato
+        run: |
+          fmt_diff="$(gofmt -l .)"
+          if [ -n "$fmt_diff" ]; then
+            echo "Archivos sin formatear:"
+            echo "$fmt_diff"
+            exit 1
+          fi
+
+      - name: Analisis estatico
+        run: go vet ./...
+
+      - name: Ejecutar pruebas
+        run: go test ./... -race -cover

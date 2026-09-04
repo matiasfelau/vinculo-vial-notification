@@ -1,0 +1,57 @@
+# vinculo-vial-notification
+
+Servicio de notificaciones push de la plataforma Vinculo Vial. Expone una
+API HTTP para el registro y baja de tokens de dispositivo (FCM) y ejecuta,
+en el mismo proceso, un worker que consume eventos de RabbitMQ para
+despachar notificaciones push a traves de Firebase Cloud Messaging.
+
+## Responsabilidades
+
+- Alta y baja de tokens FCM por usuario (`/api/v1/notifications/tokens`).
+- Consumo del evento `alert.created` y despacho de la push correspondiente
+  a los destinatarios de una alerta.
+- Consumo del evento `user.sessions.revoked` y limpieza de tokens ante la
+  revocacion de sesiones de un usuario.
+- Deduplicacion de eventos por `eventId` para garantizar entrega efectiva
+  una unica vez pese a la semantica at-least-once de RabbitMQ.
+
+## Arquitectura
+
+El servicio sigue Clean Architecture con los siguientes limites:
+
+```
+/cmd/api             punto de entrada: arranque de API y worker
+/internal/domain     entidades e interfaces de dominio (sin dependencias externas)
+/internal/service    casos de uso
+/internal/repository capa de persistencia (Postgres via GORM)
+/internal/delivery   adaptadores de entrada (HTTP y consumidores de RabbitMQ)
+/internal/client     adaptadores de salida (Firebase Admin SDK)
+/pkg/config          carga de configuracion desde variables de entorno
+```
+
+## Requisitos
+
+- Go 1.26 o superior.
+- Docker y Docker Compose para la ejecucion en contenedores.
+- Red externa `vinculo-vial` ya creada (compartida con el resto de la
+  plataforma) y broker RabbitMQ con la topologia declarada por
+  `vinculo-vial-core` en ejecucion.
+
+## Configuracion
+
+Las variables de entorno requeridas estan documentadas en `.env.example`.
+Para desarrollo local, copiar ese archivo a `.env` y completar los valores
+marcados como `REPLACE_WITH_...`.
+
+## Comandos
+
+```
+go run ./cmd/api
+go test ./...
+CGO_ENABLED=0 go build -o notification ./cmd/api
+docker compose up --build
+```
+
+## Salud del servicio
+
+`GET /health` responde `200 OK` mientras el proceso este activo.
