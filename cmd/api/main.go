@@ -42,7 +42,12 @@ func main() {
 		log.Fatalf("configuracion invalida: %v", err)
 	}
 
-	db, err := postgres.Connect(cfg.DatabaseURL)
+	db, err := postgres.Connect(cfg.DatabaseURL, postgres.PoolConfig{
+		StatementTimeoutMS: cfg.DBStatementTimeoutMS,
+		MaxOpenConns:       cfg.DBMaxOpenConns,
+		MaxIdleConns:       cfg.DBMaxIdleConns,
+		ConnMaxLifetime:    time.Duration(cfg.DBConnMaxLifetimeMinutes) * time.Minute,
+	})
 	if err != nil {
 		log.Fatalf("no se pudo conectar a la base de datos: %v", err)
 	}
@@ -63,8 +68,11 @@ func main() {
 	deliveryhttp.RegisterTokenRoutes(router, tokenHandler)
 
 	server := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: router,
+		Addr:         ":" + cfg.Port,
+		Handler:      router,
+		ReadTimeout:  time.Duration(cfg.HTTPReadTimeoutSeconds) * time.Second,
+		WriteTimeout: time.Duration(cfg.HTTPWriteTimeoutSeconds) * time.Second,
+		IdleTimeout:  time.Duration(cfg.HTTPIdleTimeoutSeconds) * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
