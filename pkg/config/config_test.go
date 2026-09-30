@@ -7,6 +7,7 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	t.Setenv("MAX_RETRIES", "")
 	t.Setenv("FCM_BATCH_SIZE", "")
 	t.Setenv("FCM_TIMEOUT_SECONDS", "")
+	t.Setenv("RABBITMQ_PREFETCH", "")
 	t.Setenv("RABBITMQ_EXCHANGE", "")
 	t.Setenv("ALERT_QUEUE", "")
 	t.Setenv("SESSIONS_REVOKED_QUEUE", "")
@@ -28,6 +29,9 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	if cfg.FCMTimeoutSeconds != 10 {
 		t.Errorf("FCMTimeoutSeconds = %d, se esperaba %d", cfg.FCMTimeoutSeconds, 10)
 	}
+	if cfg.RabbitMQPrefetch != 10 {
+		t.Errorf("RabbitMQPrefetch = %d, se esperaba %d", cfg.RabbitMQPrefetch, 10)
+	}
 	if cfg.RabbitMQExchange != "vvi.topic.exchange" {
 		t.Errorf("RabbitMQExchange = %q, se esperaba %q", cfg.RabbitMQExchange, "vvi.topic.exchange")
 	}
@@ -42,6 +46,7 @@ func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
 	t.Setenv("MAX_RETRIES", "3")
 	t.Setenv("FCM_BATCH_SIZE", "250")
 	t.Setenv("FCM_TIMEOUT_SECONDS", "20")
+	t.Setenv("RABBITMQ_PREFETCH", "50")
 
 	cfg, err := Load()
 	if err != nil {
@@ -62,6 +67,9 @@ func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
 	}
 	if cfg.FCMTimeoutSeconds != 20 {
 		t.Errorf("FCMTimeoutSeconds = %d, se esperaba %d", cfg.FCMTimeoutSeconds, 20)
+	}
+	if cfg.RabbitMQPrefetch != 50 {
+		t.Errorf("RabbitMQPrefetch = %d, se esperaba %d", cfg.RabbitMQPrefetch, 50)
 	}
 }
 
@@ -86,5 +94,13 @@ func TestLoad_ErrorSiFCMTimeoutSecondsNoEsNumerico(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() debia devolver un error ante FCM_TIMEOUT_SECONDS invalido")
+	}
+}
+
+func TestLoad_ErrorSiRabbitMQPrefetchNoEsNumerico(t *testing.T) {
+	t.Setenv("RABBITMQ_PREFETCH", "no-numerico")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() debia devolver un error ante RABBITMQ_PREFETCH invalido")
 	}
 }
