@@ -12,7 +12,7 @@ import (
 
 func TestDeviceTokenRepository_UpsertCreaUnTokenNuevo(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewDeviceTokenRepository(db)
+	repo := NewDeviceTokenRepository(db, time.Second)
 	ctx := context.Background()
 
 	owner := uuid.New()
@@ -33,7 +33,7 @@ func TestDeviceTokenRepository_UpsertCreaUnTokenNuevo(t *testing.T) {
 
 func TestDeviceTokenRepository_UpsertReasignaElOwnerSinDuplicar(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewDeviceTokenRepository(db)
+	repo := NewDeviceTokenRepository(db, time.Second)
 	ctx := context.Background()
 
 	ownerA := uuid.New()
@@ -72,7 +72,7 @@ func TestDeviceTokenRepository_UpsertReasignaElOwnerSinDuplicar(t *testing.T) {
 
 func TestDeviceTokenRepository_DeleteEsIdempotenteSiNoExiste(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewDeviceTokenRepository(db)
+	repo := NewDeviceTokenRepository(db, time.Second)
 	ctx := context.Background()
 
 	if err := repo.Delete(ctx, uuid.New(), "token-inexistente"); err != nil {
@@ -82,7 +82,7 @@ func TestDeviceTokenRepository_DeleteEsIdempotenteSiNoExiste(t *testing.T) {
 
 func TestDeviceTokenRepository_DeleteNoBorraTokenDeOtroOwner(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewDeviceTokenRepository(db)
+	repo := NewDeviceTokenRepository(db, time.Second)
 	ctx := context.Background()
 
 	owner := uuid.New()
@@ -107,7 +107,7 @@ func TestDeviceTokenRepository_DeleteNoBorraTokenDeOtroOwner(t *testing.T) {
 
 func TestDeviceTokenRepository_DeleteByTokensBorraEnLote(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewDeviceTokenRepository(db)
+	repo := NewDeviceTokenRepository(db, time.Second)
 	ctx := context.Background()
 
 	owner := uuid.New()
@@ -132,7 +132,7 @@ func TestDeviceTokenRepository_DeleteByTokensBorraEnLote(t *testing.T) {
 
 func TestDeviceTokenRepository_DeleteByOwnerIDBorraTodosSusTokens(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewDeviceTokenRepository(db)
+	repo := NewDeviceTokenRepository(db, time.Second)
 	ctx := context.Background()
 
 	owner := uuid.New()

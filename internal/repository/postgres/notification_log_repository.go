@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -13,11 +14,14 @@ import (
 // NotificationLogRepository es la implementacion GORM/Postgres de
 // domain.NotificationLogRepository.
 type NotificationLogRepository struct {
-	db *gorm.DB
+	db           *gorm.DB
+	queryTimeout time.Duration
 }
 
-func NewNotificationLogRepository(db *gorm.DB) *NotificationLogRepository {
-	return &NotificationLogRepository{db: db}
+// NewNotificationLogRepository construye el repositorio. Ver el
+// comentario de queryTimeout en NewDeviceTokenRepository.
+func NewNotificationLogRepository(db *gorm.DB, queryTimeout time.Duration) *NotificationLogRepository {
+	return &NotificationLogRepository{db: db, queryTimeout: queryTimeout}
 }
 
 var _ domain.NotificationLogRepository = (*NotificationLogRepository)(nil)
@@ -27,6 +31,9 @@ var _ domain.NotificationLogRepository = (*NotificationLogRepository)(nil)
 // interpretar el error de violacion de constraint. RowsAffected en 0
 // significa que el evento ya estaba registrado.
 func (r *NotificationLogRepository) Register(ctx context.Context, log *domain.NotificationLog) error {
+	ctx, cancel := withQueryTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
 	model := NotificationLogModel{
 		ID:          log.ID,
 		EventID:     log.EventID,
@@ -54,6 +61,9 @@ func (r *NotificationLogRepository) Register(ctx context.Context, log *domain.No
 }
 
 func (r *NotificationLogRepository) UpdateStatus(ctx context.Context, eventID uuid.UUID, status domain.NotificationStatus) error {
+	ctx, cancel := withQueryTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
 	return r.db.WithContext(ctx).
 		Model(&NotificationLogModel{}).
 		Where("event_id = ?", eventID).
