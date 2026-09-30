@@ -34,7 +34,7 @@ func (h *TokenHandler) Register(c *gin.Context) {
 	ownerID := ownerIDFromContext(c)
 
 	if err := h.registerService.Execute(c.Request.Context(), ownerID, req.FCMToken); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo registrar el token"})
+		c.JSON(classifyDependencyError(err), gin.H{"error": "no se pudo registrar el token"})
 		return
 	}
 
@@ -53,7 +53,7 @@ func (h *TokenHandler) Delete(c *gin.Context) {
 	ownerID := ownerIDFromContext(c)
 
 	if err := h.deleteService.Execute(c.Request.Context(), ownerID, req.FCMToken); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo dar de baja el token"})
+		c.JSON(classifyDependencyError(err), gin.H{"error": "no se pudo dar de baja el token"})
 		return
 	}
 
