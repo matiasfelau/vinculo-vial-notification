@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"firebase.google.com/go/v4/messaging"
 
@@ -148,5 +149,44 @@ func TestBuildMulticastMessage_NoContieneActorNiIdentificadoresDeEmisor(t *testi
 	}
 	if len(message.Data) != 1 {
 		t.Errorf("Data deberia contener unicamente alert_type, se obtuvo: %v", message.Data)
+	}
+}
+
+// blockingMulticastSender simula un SDK colgado: nunca responde por si
+// mismo, solo cuando el contexto que recibe se cancela. Permite
+// comprobar que Dispatch aplica su propio timeout sin depender de que
+// el proveedor real tarde de verdad.
+type blockingMulticastSender struct{}
+
+func (b *blockingMulticastSender) SendEachForMulticast(ctx context.Context, _ *messaging.MulticastMessage) (*messaging.BatchResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestDispatcher_AplicaUnTimeoutPropioPorLote(t *testing.T) {
+	dispatcher := &Dispatcher{client: &blockingMulticastSender{}, batchSize: 500, timeout: 20 * time.Millisecond}
+
+	start := time.Now()
+	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("se esperaba un error por timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, se esperaba context.DeadlineExceeded", err)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("Dispatch() tardo %v, no respeto el timeout configurado", elapsed)
+	}
+}
+
+func TestDispatcher_SinTimeoutConfiguradoUsaElContextoDelLlamador(t *testing.T) {
+	sender := &fakeMulticastSender{responses: []*messaging.BatchResponse{successResponses(1)}}
+	dispatcher := &Dispatcher{client: sender, batchSize: 500, timeout: 0}
+
+	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque")
+	if err != nil {
+		t.Fatalf("Dispatch() devolvio un error inesperado: %v", err)
 	}
 }

@@ -2,6 +2,7 @@ package fcm
 
 import (
 	"context"
+	"time"
 
 	"firebase.google.com/go/v4/messaging"
 
@@ -34,10 +35,16 @@ var isInvalidToken = func(err error) bool {
 type Dispatcher struct {
 	client    multicastSender
 	batchSize int
+	timeout   time.Duration
 }
 
-func NewDispatcher(client *messaging.Client, batchSize int) *Dispatcher {
-	return &Dispatcher{client: client, batchSize: batchSize}
+// NewDispatcher construye el Dispatcher. timeout acota cada llamada
+// individual al SDK: sin un limite propio, una llamada colgada al
+// proveedor bloquearia el worker para siempre, dejando la cola sin
+// consumirse mientras el proceso sigue respondiendo HTTP con
+// normalidad. timeout <= 0 desactiva el limite.
+func NewDispatcher(client *messaging.Client, batchSize int, timeout time.Duration) *Dispatcher {
+	return &Dispatcher{client: client, batchSize: batchSize, timeout: timeout}
 }
 
 var _ domain.Dispatcher = (*Dispatcher)(nil)
@@ -48,7 +55,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, tokens []string, alertType st
 	for _, batch := range partition(tokens, d.batchSize) {
 		message := buildMulticastMessage(batch, alertType)
 
-		response, err := d.client.SendEachForMulticast(ctx, message)
+		response, err := d.sendBatch(ctx, message)
 		if err != nil {
 			return outcomes, err
 		}
@@ -63,6 +70,21 @@ func (d *Dispatcher) Dispatch(ctx context.Context, tokens []string, alertType st
 	}
 
 	return outcomes, nil
+}
+
+// sendBatch envia un unico lote acotando el tiempo de espera al SDK
+// con un timeout propio, independiente del ctx del llamador. Cada
+// lote recibe su propio presupuesto de tiempo: un despacho con varios
+// lotes no debe repartir un unico timeout entre todos.
+func (d *Dispatcher) sendBatch(ctx context.Context, message *messaging.MulticastMessage) (*messaging.BatchResponse, error) {
+	if d.timeout <= 0 {
+		return d.client.SendEachForMulticast(ctx, message)
+	}
+
+	batchCtx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
+
+	return d.client.SendEachForMulticast(batchCtx, message)
 }
 
 // buildMulticastMessage arma el payload sin PII: solo alert_type como
