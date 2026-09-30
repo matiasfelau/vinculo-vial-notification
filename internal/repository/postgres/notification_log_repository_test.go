@@ -13,7 +13,7 @@ import (
 
 func TestNotificationLogRepository_RegistraUnEventoNuevo(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewNotificationLogRepository(db)
+	repo := NewNotificationLogRepository(db, time.Second)
 
 	eventID := uuid.New()
 	log := &domain.NotificationLog{
@@ -30,7 +30,7 @@ func TestNotificationLogRepository_RegistraUnEventoNuevo(t *testing.T) {
 
 func TestNotificationLogRepository_MismoEventIDEntregadoDosVeces_SoloUnDespacho(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewNotificationLogRepository(db)
+	repo := NewNotificationLogRepository(db, time.Second)
 	ctx := context.Background()
 
 	eventID := uuid.New()
@@ -66,7 +66,7 @@ func TestNotificationLogRepository_MismoEventIDEntregadoDosVeces_SoloUnDespacho(
 
 func TestNotificationLogRepository_UpdateStatusActualizaElRegistroExistente(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewNotificationLogRepository(db)
+	repo := NewNotificationLogRepository(db, time.Second)
 	ctx := context.Background()
 
 	eventID := uuid.New()
@@ -90,7 +90,7 @@ func TestNotificationLogRepository_UpdateStatusActualizaElRegistroExistente(t *t
 
 func TestNotificationLogRepository_EventosDistintosSeRegistranPorSeparado(t *testing.T) {
 	db := openTestDB(t)
-	repo := NewNotificationLogRepository(db)
+	repo := NewNotificationLogRepository(db, time.Second)
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {

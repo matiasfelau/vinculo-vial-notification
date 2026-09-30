@@ -56,8 +56,9 @@ func main() {
 		log.Fatalf("no se pudo migrar el esquema: %v", err)
 	}
 
-	deviceTokenRepository := postgres.NewDeviceTokenRepository(db)
-	notificationLogRepository := postgres.NewNotificationLogRepository(db)
+	queryTimeout := time.Duration(cfg.DBQueryTimeoutSeconds) * time.Second
+	deviceTokenRepository := postgres.NewDeviceTokenRepository(db, queryTimeout)
+	notificationLogRepository := postgres.NewNotificationLogRepository(db, queryTimeout)
 
 	tokenHandler := deliveryhttp.NewTokenHandler(
 		tokens.NewRegisterTokenService(deviceTokenRepository),

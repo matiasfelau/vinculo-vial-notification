@@ -12,6 +12,7 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	t.Setenv("DB_MAX_OPEN_CONNS", "")
 	t.Setenv("DB_MAX_IDLE_CONNS", "")
 	t.Setenv("DB_CONN_MAX_LIFETIME_MINUTES", "")
+	t.Setenv("DB_QUERY_TIMEOUT_SECONDS", "")
 	t.Setenv("HTTP_READ_TIMEOUT_SECONDS", "")
 	t.Setenv("HTTP_WRITE_TIMEOUT_SECONDS", "")
 	t.Setenv("HTTP_IDLE_TIMEOUT_SECONDS", "")
@@ -51,6 +52,9 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	if cfg.DBConnMaxLifetimeMinutes != 30 {
 		t.Errorf("DBConnMaxLifetimeMinutes = %d, se esperaba %d", cfg.DBConnMaxLifetimeMinutes, 30)
 	}
+	if cfg.DBQueryTimeoutSeconds != 7 {
+		t.Errorf("DBQueryTimeoutSeconds = %d, se esperaba %d", cfg.DBQueryTimeoutSeconds, 7)
+	}
 	if cfg.HTTPReadTimeoutSeconds != 5 {
 		t.Errorf("HTTPReadTimeoutSeconds = %d, se esperaba %d", cfg.HTTPReadTimeoutSeconds, 5)
 	}
@@ -79,6 +83,7 @@ func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
 	t.Setenv("DB_MAX_OPEN_CONNS", "25")
 	t.Setenv("DB_MAX_IDLE_CONNS", "8")
 	t.Setenv("DB_CONN_MAX_LIFETIME_MINUTES", "15")
+	t.Setenv("DB_QUERY_TIMEOUT_SECONDS", "4")
 	t.Setenv("HTTP_READ_TIMEOUT_SECONDS", "3")
 	t.Setenv("HTTP_WRITE_TIMEOUT_SECONDS", "7")
 	t.Setenv("HTTP_IDLE_TIMEOUT_SECONDS", "45")
@@ -117,6 +122,9 @@ func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
 	}
 	if cfg.DBConnMaxLifetimeMinutes != 15 {
 		t.Errorf("DBConnMaxLifetimeMinutes = %d, se esperaba %d", cfg.DBConnMaxLifetimeMinutes, 15)
+	}
+	if cfg.DBQueryTimeoutSeconds != 4 {
+		t.Errorf("DBQueryTimeoutSeconds = %d, se esperaba %d", cfg.DBQueryTimeoutSeconds, 4)
 	}
 	if cfg.HTTPReadTimeoutSeconds != 3 {
 		t.Errorf("HTTPReadTimeoutSeconds = %d, se esperaba %d", cfg.HTTPReadTimeoutSeconds, 3)
@@ -190,6 +198,14 @@ func TestLoad_ErrorSiDBConnMaxLifetimeMinutesNoEsNumerico(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() debia devolver un error ante DB_CONN_MAX_LIFETIME_MINUTES invalido")
+	}
+}
+
+func TestLoad_ErrorSiDBQueryTimeoutSecondsNoEsNumerico(t *testing.T) {
+	t.Setenv("DB_QUERY_TIMEOUT_SECONDS", "no-numerico")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() debia devolver un error ante DB_QUERY_TIMEOUT_SECONDS invalido")
 	}
 }
 

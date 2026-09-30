@@ -27,6 +27,7 @@ type Config struct {
 	DBMaxOpenConns           int
 	DBMaxIdleConns           int
 	DBConnMaxLifetimeMinutes int
+	DBQueryTimeoutSeconds    int
 
 	HTTPReadTimeoutSeconds  int
 	HTTPWriteTimeoutSeconds int
@@ -77,6 +78,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	dbQueryTimeoutSeconds, err := parseIntEnv("DB_QUERY_TIMEOUT_SECONDS", 7)
+	if err != nil {
+		return nil, err
+	}
+
 	httpReadTimeoutSeconds, err := parseIntEnv("HTTP_READ_TIMEOUT_SECONDS", 5)
 	if err != nil {
 		return nil, err
@@ -109,6 +115,7 @@ func Load() (*Config, error) {
 		DBMaxOpenConns:           dbMaxOpenConns,
 		DBMaxIdleConns:           dbMaxIdleConns,
 		DBConnMaxLifetimeMinutes: dbConnMaxLifetimeMinutes,
+		DBQueryTimeoutSeconds:    dbQueryTimeoutSeconds,
 
 		HTTPReadTimeoutSeconds:  httpReadTimeoutSeconds,
 		HTTPWriteTimeoutSeconds: httpWriteTimeoutSeconds,
