@@ -25,6 +25,13 @@ import (
 
 const shutdownTimeout = 10 * time.Second
 
+// workerShutdownTimeout acota la espera a que los workers terminen el
+// mensaje en vuelo durante el apagado. Es una red de seguridad ante
+// un worker que quedo colgado pese a los timeouts propios de sus
+// dependencias: sin este limite, un SIGTERM podria no completar
+// nunca.
+const workerShutdownTimeout = 15 * time.Second
+
 // exitFunc se indirecciona para poder testear runWorker sin terminar
 // el proceso de pruebas.
 var exitFunc = os.Exit
@@ -67,7 +74,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("no se pudo inicializar el cliente de firebase: %v", err)
 	}
-	fcmDispatcher := fcm.NewDispatcher(messagingClient, cfg.FCMBatchSize)
+	fcmDispatcher := fcm.NewDispatcher(messagingClient, cfg.FCMBatchSize, time.Duration(cfg.FCMTimeoutSeconds)*time.Second)
 
 	dispatchAlertService := dispatch.NewDispatchAlertService(notificationLogRepository, deviceTokenRepository, fcmDispatcher)
 	revokeSessionsService := sessions.NewRevokeSessionsService(notificationLogRepository, deviceTokenRepository)
@@ -121,8 +128,31 @@ func main() {
 	}
 
 	log.Println("esperando a que los workers terminen el mensaje en vuelo")
-	workers.Wait()
+	if !waitForWorkers(&workers, workerShutdownTimeout) {
+		log.Printf("los workers no terminaron dentro de %s, forzando la salida del proceso", workerShutdownTimeout)
+		exitFunc(1)
+		return
+	}
 	log.Println("workers detenidos correctamente")
+}
+
+// waitForWorkers espera a que wg termine, acotando la espera a
+// timeout. Devuelve false si el plazo se agoto sin que los workers
+// terminaran: un contenedor que nunca completa su apagado ante
+// SIGTERM se queda colgado en el orquestador en lugar de reiniciarse.
+func waitForWorkers(wg *sync.WaitGroup, timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // runWorker ejecuta run y garantiza que un panico dentro del worker

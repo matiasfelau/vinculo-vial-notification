@@ -20,6 +20,7 @@ type Config struct {
 	MaxRetries              int
 	FirebaseCredentialsPath string
 	FCMBatchSize            int
+	FCMTimeoutSeconds       int
 }
 
 // Load construye la configuracion a partir de las variables de entorno
@@ -36,6 +37,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	fcmTimeoutSeconds, err := parseIntEnv("FCM_TIMEOUT_SECONDS", 10)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		Port:                    getEnv("PORT", "8080"),
 		DatabaseURL:             os.Getenv("DATABASE_URL"),
@@ -46,6 +52,7 @@ func Load() (*Config, error) {
 		MaxRetries:              maxRetries,
 		FirebaseCredentialsPath: os.Getenv("FIREBASE_CREDENTIALS_PATH"),
 		FCMBatchSize:            fcmBatchSize,
+		FCMTimeoutSeconds:       fcmTimeoutSeconds,
 	}, nil
 }
 

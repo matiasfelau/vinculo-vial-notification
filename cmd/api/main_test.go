@@ -75,3 +75,28 @@ func TestRunWorker_SiempreLlamaWgDone(t *testing.T) {
 		t.Fatal("wg.Done() deberia haberse llamado incluso tras un panico")
 	}
 }
+
+func TestWaitForWorkers_DevuelveTrueCuandoTerminanATiempo(t *testing.T) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		wg.Done()
+	}()
+
+	if !waitForWorkers(&wg, time.Second) {
+		t.Fatal("se esperaba que waitForWorkers devolviera true cuando los workers terminan a tiempo")
+	}
+}
+
+func TestWaitForWorkers_DevuelveFalseAnteUnWorkerColgado(t *testing.T) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	// wg.Done() nunca se invoca: simula un worker que quedo colgado
+	// pese a los timeouts propios de sus dependencias.
+
+	if waitForWorkers(&wg, 20*time.Millisecond) {
+		t.Fatal("se esperaba que waitForWorkers devolviera false ante el timeout")
+	}
+}
