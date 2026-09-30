@@ -24,11 +24,17 @@ type ConsumerFactory func(channel *amqp.Channel) *Consumer
 // backoff exponencial acotado y reintenta, sin volver a declarar
 // topologia. Devuelve cuando el contexto se cancela, una vez que el
 // consumer termino de procesar el mensaje en vuelo.
-func RunWithReconnect(ctx context.Context, amqpURL, queue string, factory ConsumerFactory) {
+//
+// prefetch limita, via basic.qos, cuantos mensajes sin ACK puede
+// tener en vuelo el canal a la vez. Sin este limite el broker empuja
+// toda la cola pendiente al proceso: con ACK manual, eso implica
+// memoria sin techo y, ante un crash, devuelve a la cola todo ese
+// lote en vuelo de una vez.
+func RunWithReconnect(ctx context.Context, amqpURL, queue string, prefetch int, factory ConsumerFactory) {
 	backoff := minReconnectBackoff
 
 	for ctx.Err() == nil {
-		conn, channel, err := dial(amqpURL)
+		conn, channel, err := dial(amqpURL, prefetch)
 		if err != nil {
 			log.Printf("no se pudo conectar a rabbitmq para %s: %v", queue, err)
 			if !sleepOrDone(ctx, backoff) {
@@ -61,7 +67,7 @@ func RunWithReconnect(ctx context.Context, amqpURL, queue string, factory Consum
 	}
 }
 
-func dial(amqpURL string) (*amqp.Connection, *amqp.Channel, error) {
+func dial(amqpURL string, prefetch int) (*amqp.Connection, *amqp.Channel, error) {
 	conn, err := amqp.Dial(amqpURL)
 	if err != nil {
 		return nil, nil, err
@@ -69,6 +75,12 @@ func dial(amqpURL string) (*amqp.Connection, *amqp.Channel, error) {
 
 	channel, err := conn.Channel()
 	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+
+	if err := channel.Qos(prefetch, 0, false); err != nil {
+		channel.Close()
 		conn.Close()
 		return nil, nil, err
 	}

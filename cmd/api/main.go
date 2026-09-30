@@ -83,7 +83,7 @@ func main() {
 	workers.Add(2)
 
 	go runWorker(&workers, "alert.created", func() {
-		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, func(channel *amqp.Channel) *deliveryworker.Consumer {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, cfg.RabbitMQPrefetch, func(channel *amqp.Channel) *deliveryworker.Consumer {
 			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
 			handler := deliveryworker.NewAlertCreatedHandler(dispatchAlertService, deadLetters, int64(cfg.MaxRetries))
 			return deliveryworker.NewConsumer(channel, cfg.AlertQueue, handler)
@@ -91,7 +91,7 @@ func main() {
 	})
 
 	go runWorker(&workers, "user.sessions.revoked", func() {
-		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.SessionsRevokedQueue, func(channel *amqp.Channel) *deliveryworker.Consumer {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.SessionsRevokedQueue, cfg.RabbitMQPrefetch, func(channel *amqp.Channel) *deliveryworker.Consumer {
 			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
 			handler := deliveryworker.NewSessionsRevokedHandler(revokeSessionsService, deadLetters, int64(cfg.MaxRetries))
 			return deliveryworker.NewConsumer(channel, cfg.SessionsRevokedQueue, handler)
