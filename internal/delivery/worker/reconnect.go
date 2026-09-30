@@ -30,12 +30,19 @@ type ConsumerFactory func(channel *amqp.Channel) *Consumer
 // toda la cola pendiente al proceso: con ACK manual, eso implica
 // memoria sin techo y, ante un crash, devuelve a la cola todo ese
 // lote en vuelo de una vez.
-func RunWithReconnect(ctx context.Context, amqpURL, queue string, prefetch int, factory ConsumerFactory) {
+//
+// status, si no es nil, se actualiza en cada transicion de conexion:
+// el endpoint /ready lo consulta para decidir si esta instancia debe
+// salir del balanceo. Puede pasarse nil cuando el llamador no
+// necesita observar el estado (por ejemplo, en tests).
+func RunWithReconnect(ctx context.Context, amqpURL, queue string, prefetch int, status *ConnectionStatus, factory ConsumerFactory) {
 	backoff := minReconnectBackoff
+	defer setConnected(status, false)
 
 	for ctx.Err() == nil {
 		conn, channel, err := dial(amqpURL, prefetch)
 		if err != nil {
+			setConnected(status, false)
 			log.Printf("no se pudo conectar a rabbitmq para %s: %v", queue, err)
 			if !sleepOrDone(ctx, backoff) {
 				return
@@ -44,11 +51,13 @@ func RunWithReconnect(ctx context.Context, amqpURL, queue string, prefetch int, 
 			continue
 		}
 
+		setConnected(status, true)
 		backoff = minReconnectBackoff
 
 		consumer := factory(channel)
 		runErr := consumer.Run(ctx)
 
+		setConnected(status, false)
 		channel.Close()
 		conn.Close()
 

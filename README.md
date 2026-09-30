@@ -54,4 +54,13 @@ docker compose up --build
 
 ## Salud del servicio
 
-`GET /health` responde `200 OK` mientras el proceso este activo.
+`GET /health` responde `200 OK` mientras el proceso este activo. Es una
+sonda de liveness pura: no verifica dependencias externas.
+
+`GET /ready` refleja el estado real de las dependencias (Postgres y ambas
+conexiones a RabbitMQ). Devuelve `200 OK` con `{"status":"ready",...}`
+cuando todas estan disponibles, o `503 Service Unavailable` con
+`{"status":"not_ready",...}` y el detalle por dependencia en caso
+contrario. Pensado como healthcheck pasivo para que Kong saque del
+balanceo una instancia que sigue respondiendo HTTP pero no puede cumplir
+su funcion (perdio la base o el broker).
