@@ -22,3 +22,11 @@ func RegisterTokenRoutes(router *gin.Engine, handler *TokenHandler) {
 	tokens.POST("", handler.Register)
 	tokens.DELETE("", handler.Delete)
 }
+
+// RegisterReadinessRoute agrega el healthcheck de dependencias. A
+// diferencia de /health, /ready refleja el estado real: Kong lo usa
+// para sacar del balanceo una instancia que sigue viva pero no puede
+// cumplir su funcion.
+func RegisterReadinessRoute(router *gin.Engine, handler *ReadinessHandler) {
+	router.GET("/ready", handler.Handle)
+}

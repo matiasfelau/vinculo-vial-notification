@@ -56,6 +56,11 @@ func main() {
 		log.Fatalf("no se pudo migrar el esquema: %v", err)
 	}
 
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("no se pudo obtener el *sql.DB subyacente: %v", err)
+	}
+
 	queryTimeout := time.Duration(cfg.DBQueryTimeoutSeconds) * time.Second
 	deviceTokenRepository := postgres.NewDeviceTokenRepository(db, queryTimeout)
 	notificationLogRepository := postgres.NewNotificationLogRepository(db, queryTimeout)
@@ -65,8 +70,17 @@ func main() {
 		tokens.NewDeleteTokenService(deviceTokenRepository),
 	)
 
+	alertBrokerStatus := &deliveryworker.ConnectionStatus{}
+	sessionsBrokerStatus := &deliveryworker.ConnectionStatus{}
+
+	readinessHandler := deliveryhttp.NewReadinessHandler(sqlDB, map[string]deliveryhttp.ConnectionChecker{
+		"rabbitmq_alert_created":    alertBrokerStatus,
+		"rabbitmq_sessions_revoked": sessionsBrokerStatus,
+	})
+
 	router := deliveryhttp.NewRouter()
 	deliveryhttp.RegisterTokenRoutes(router, tokenHandler)
+	deliveryhttp.RegisterReadinessRoute(router, readinessHandler)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -92,7 +106,7 @@ func main() {
 	workers.Add(2)
 
 	go runWorker(&workers, "alert.created", func() {
-		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, cfg.RabbitMQPrefetch, func(channel *amqp.Channel) *deliveryworker.Consumer {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, cfg.RabbitMQPrefetch, alertBrokerStatus, func(channel *amqp.Channel) *deliveryworker.Consumer {
 			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
 			handler := deliveryworker.NewAlertCreatedHandler(dispatchAlertService, deadLetters, int64(cfg.MaxRetries))
 			return deliveryworker.NewConsumer(channel, cfg.AlertQueue, handler)
@@ -100,7 +114,7 @@ func main() {
 	})
 
 	go runWorker(&workers, "user.sessions.revoked", func() {
-		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.SessionsRevokedQueue, cfg.RabbitMQPrefetch, func(channel *amqp.Channel) *deliveryworker.Consumer {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.SessionsRevokedQueue, cfg.RabbitMQPrefetch, sessionsBrokerStatus, func(channel *amqp.Channel) *deliveryworker.Consumer {
 			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
 			handler := deliveryworker.NewSessionsRevokedHandler(revokeSessionsService, deadLetters, int64(cfg.MaxRetries))
 			return deliveryworker.NewConsumer(channel, cfg.SessionsRevokedQueue, handler)
