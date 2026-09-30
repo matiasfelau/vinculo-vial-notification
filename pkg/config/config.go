@@ -22,6 +22,15 @@ type Config struct {
 	FCMBatchSize            int
 	FCMTimeoutSeconds       int
 	RabbitMQPrefetch        int
+
+	DBStatementTimeoutMS     int
+	DBMaxOpenConns           int
+	DBMaxIdleConns           int
+	DBConnMaxLifetimeMinutes int
+
+	HTTPReadTimeoutSeconds  int
+	HTTPWriteTimeoutSeconds int
+	HTTPIdleTimeoutSeconds  int
 }
 
 // Load construye la configuracion a partir de las variables de entorno
@@ -48,6 +57,41 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	dbStatementTimeoutMS, err := parseIntEnv("DB_STATEMENT_TIMEOUT_MS", 5000)
+	if err != nil {
+		return nil, err
+	}
+
+	dbMaxOpenConns, err := parseIntEnv("DB_MAX_OPEN_CONNS", 10)
+	if err != nil {
+		return nil, err
+	}
+
+	dbMaxIdleConns, err := parseIntEnv("DB_MAX_IDLE_CONNS", 5)
+	if err != nil {
+		return nil, err
+	}
+
+	dbConnMaxLifetimeMinutes, err := parseIntEnv("DB_CONN_MAX_LIFETIME_MINUTES", 30)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReadTimeoutSeconds, err := parseIntEnv("HTTP_READ_TIMEOUT_SECONDS", 5)
+	if err != nil {
+		return nil, err
+	}
+
+	httpWriteTimeoutSeconds, err := parseIntEnv("HTTP_WRITE_TIMEOUT_SECONDS", 10)
+	if err != nil {
+		return nil, err
+	}
+
+	httpIdleTimeoutSeconds, err := parseIntEnv("HTTP_IDLE_TIMEOUT_SECONDS", 60)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		Port:                    getEnv("PORT", "8080"),
 		DatabaseURL:             os.Getenv("DATABASE_URL"),
@@ -60,6 +104,15 @@ func Load() (*Config, error) {
 		FCMBatchSize:            fcmBatchSize,
 		FCMTimeoutSeconds:       fcmTimeoutSeconds,
 		RabbitMQPrefetch:        rabbitMQPrefetch,
+
+		DBStatementTimeoutMS:     dbStatementTimeoutMS,
+		DBMaxOpenConns:           dbMaxOpenConns,
+		DBMaxIdleConns:           dbMaxIdleConns,
+		DBConnMaxLifetimeMinutes: dbConnMaxLifetimeMinutes,
+
+		HTTPReadTimeoutSeconds:  httpReadTimeoutSeconds,
+		HTTPWriteTimeoutSeconds: httpWriteTimeoutSeconds,
+		HTTPIdleTimeoutSeconds:  httpIdleTimeoutSeconds,
 	}, nil
 }
 
