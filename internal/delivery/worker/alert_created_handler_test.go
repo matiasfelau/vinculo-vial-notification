@@ -31,12 +31,15 @@ func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, _ string) 
 type fakeDeadLetterPublisher struct {
 	published [][]byte
 	reasons   []string
+	// err, si no es nil, simula que la DLQ no confirmo la publicacion
+	// (broker caido, falta de ack de publisher confirm).
+	err error
 }
 
 func (f *fakeDeadLetterPublisher) PublishToDLQ(_ context.Context, body []byte, reason string) error {
 	f.published = append(f.published, body)
 	f.reasons = append(f.reasons, reason)
-	return nil
+	return f.err
 }
 
 func validEnvelope(eventID, ownerID string) []byte {
@@ -85,6 +88,22 @@ func TestAlertCreatedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
 	}
 	if string(deadLetters.published[0]) != string(body) {
 		t.Errorf("el cuerpo publicado a la dlq no coincide con el original")
+	}
+}
+
+func TestAlertCreatedHandler_EnvelopeMalFormadoYFalloAlPublicarEnLaDLQ_NackSinRequeue(t *testing.T) {
+	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
+	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
+
+	body := []byte(`{esto no es json valido`)
+	outcome := handler.Handle(context.Background(), body, 0)
+
+	// Si la DLQ no confirma, el mensaje no debe perderse en silencio
+	// con un ACK: se rechaza para que el ciclo de reintentos le de
+	// otra oportunidad a la DLQ de estar disponible.
+	if outcome != OutcomeNackNoRequeue {
+		t.Fatalf("Outcome = %v, se esperaba OutcomeNackNoRequeue cuando la dlq no confirma", outcome)
 	}
 }
 
@@ -185,5 +204,22 @@ func TestAlertCreatedHandler_SuperaMaxRetries_AckYDLQ(t *testing.T) {
 	}
 	if string(deadLetters.published[0]) != string(body) {
 		t.Errorf("el cuerpo publicado a la dlq no coincide con el original")
+	}
+}
+
+func TestAlertCreatedHandler_SuperaMaxRetriesYFalloAlPublicarEnLaDLQ_NackSinRequeue(t *testing.T) {
+	deviceTokens := memory.NewDeviceTokenRepository()
+	ownerID := uuid.New()
+	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
+
+	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
+	handler := NewAlertCreatedHandler(service, deadLetters, 3)
+
+	body := validEnvelope(uuid.New().String(), ownerID.String())
+	outcome := handler.Handle(context.Background(), body, 3)
+
+	if outcome != OutcomeNackNoRequeue {
+		t.Fatalf("Outcome = %v, se esperaba OutcomeNackNoRequeue cuando la dlq no confirma al superar maxRetries", outcome)
 	}
 }

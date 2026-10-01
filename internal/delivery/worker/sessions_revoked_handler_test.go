@@ -73,6 +73,18 @@ func TestSessionsRevokedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
 	}
 }
 
+func TestSessionsRevokedHandler_EnvelopeMalFormadoYFalloAlPublicarEnLaDLQ_NackSinRequeue(t *testing.T) {
+	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository())
+	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
+	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
+
+	outcome := handler.Handle(context.Background(), []byte(`{no es json`), 0)
+
+	if outcome != OutcomeNackNoRequeue {
+		t.Fatalf("Outcome = %v, se esperaba OutcomeNackNoRequeue cuando la dlq no confirma", outcome)
+	}
+}
+
 func TestSessionsRevokedHandler_ActorInvalido_AckYDLQ(t *testing.T) {
 	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository())
 	deadLetters := &fakeDeadLetterPublisher{}
@@ -137,5 +149,19 @@ func TestSessionsRevokedHandler_SuperaMaxRetries_AckYDLQ(t *testing.T) {
 	}
 	if len(deadLetters.published) != 1 {
 		t.Fatalf("se esperaba un mensaje publicado a la dlq, se publicaron %d", len(deadLetters.published))
+	}
+}
+
+func TestSessionsRevokedHandler_SuperaMaxRetriesYFalloAlPublicarEnLaDLQ_NackSinRequeue(t *testing.T) {
+	repo := &failingDeviceTokenRepository{err: errors.New("base caida")}
+	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), repo)
+	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
+	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
+
+	body := sessionsRevokedEnvelope(uuid.New().String(), uuid.New().String())
+	outcome := handler.Handle(context.Background(), body, 3)
+
+	if outcome != OutcomeNackNoRequeue {
+		t.Fatalf("Outcome = %v, se esperaba OutcomeNackNoRequeue cuando la dlq no confirma al superar maxRetries", outcome)
 	}
 }
