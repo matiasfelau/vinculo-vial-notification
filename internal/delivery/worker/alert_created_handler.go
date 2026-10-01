@@ -49,14 +49,12 @@ func NewAlertCreatedHandler(dispatchService *dispatch.DispatchAlertService, dead
 func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries int64) Outcome {
 	envelope, err := ParseEnvelope(body)
 	if err != nil {
-		h.sendToDeadLetter(ctx, body, err)
-		return OutcomeAck
+		return h.sendToDeadLetter(ctx, body, err)
 	}
 
 	payload, err := parseAlertCreatedPayload(envelope.Payload)
 	if err != nil {
-		h.sendToDeadLetter(ctx, body, err)
-		return OutcomeAck
+		return h.sendToDeadLetter(ctx, body, err)
 	}
 
 	event := dispatch.AlertCreatedEvent{
@@ -68,8 +66,7 @@ func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries i
 	if err := h.dispatchService.Execute(ctx, event); err != nil {
 		if retries >= h.maxRetries {
 			log.Printf("se supero MAX_RETRIES (%d) procesando el evento %s, se descarta a la dlq: %v", h.maxRetries, envelope.EventID, err)
-			h.sendToDeadLetter(ctx, body, err)
-			return OutcomeAck
+			return h.sendToDeadLetter(ctx, body, err)
 		}
 
 		log.Printf("fallo transitorio procesando el evento %s (intento %d de %d): %v", envelope.EventID, retries+1, h.maxRetries, err)
@@ -79,9 +76,17 @@ func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries i
 	return OutcomeAck
 }
 
-func (h *AlertCreatedHandler) sendToDeadLetter(ctx context.Context, body []byte, cause error) {
-	log.Printf("envelope invalido, se descarta a la dlq: %v", cause)
+// sendToDeadLetter publica el mensaje a la DLQ y solo ACKea el
+// original si la DLQ confirmo la recepcion. Si la publicacion falla
+// (broker caido, DLQ sin confirmar), el mensaje se rechaza sin
+// requeue para que el ciclo normal de reintentos le de otra
+// oportunidad a la DLQ de estar disponible, en lugar de perderlo en
+// silencio con un ACK que no garantiza nada.
+func (h *AlertCreatedHandler) sendToDeadLetter(ctx context.Context, body []byte, cause error) Outcome {
+	log.Printf("descartando mensaje a la dlq: %v", cause)
 	if err := h.deadLetters.PublishToDLQ(ctx, body, cause.Error()); err != nil {
-		log.Printf("no se pudo publicar a la dlq: %v", err)
+		log.Printf("no se pudo publicar a la dlq, se reintenta: %v", err)
+		return OutcomeNackNoRequeue
 	}
+	return OutcomeAck
 }

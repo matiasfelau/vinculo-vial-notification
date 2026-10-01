@@ -94,7 +94,30 @@ func dial(amqpURL string, prefetch int) (*amqp.Connection, *amqp.Channel, error)
 		return nil, nil, err
 	}
 
+	// Modo confirm: requerido para que AMQPDeadLetterPublisher pueda
+	// esperar la confirmacion del broker antes de que el handler ACKee
+	// el mensaje original.
+	if err := channel.Confirm(false); err != nil {
+		channel.Close()
+		conn.Close()
+		return nil, nil, err
+	}
+
+	go logUnroutableReturns(channel.NotifyReturn(make(chan amqp.Return, 1)))
+
 	return conn, channel, nil
+}
+
+// logUnroutableReturns consume las devoluciones de mensajes
+// mandatory=true que el broker no pudo rutear (por ejemplo, la DLQ
+// sin una cola bindeada: un problema de topologia que este servicio
+// no declara y no puede resolver). Nunca loguea el cuerpo del
+// mensaje, solo el motivo y el destino de la publicacion. Termina
+// sola cuando el canal AMQP se cierra.
+func logUnroutableReturns(returns <-chan amqp.Return) {
+	for ret := range returns {
+		log.Printf("aviso: mensaje no ruteable devuelto por el broker: exchange=%s routing_key=%s code=%d reason=%q", ret.Exchange, ret.RoutingKey, ret.ReplyCode, ret.ReplyText)
+	}
 }
 
 // sleepOrDone espera d, o hasta que el contexto se cancele. Devuelve
