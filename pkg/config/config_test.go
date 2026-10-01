@@ -52,8 +52,8 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	if cfg.FCMBreakerOpenSeconds != 30 {
 		t.Errorf("FCMBreakerOpenSeconds = %d, se esperaba %d", cfg.FCMBreakerOpenSeconds, 30)
 	}
-	if cfg.DBStatementTimeoutMS != 5000 {
-		t.Errorf("DBStatementTimeoutMS = %d, se esperaba %d", cfg.DBStatementTimeoutMS, 5000)
+	if cfg.DBStatementTimeoutMS != 1500 {
+		t.Errorf("DBStatementTimeoutMS = %d, se esperaba %d", cfg.DBStatementTimeoutMS, 1500)
 	}
 	if cfg.DBMaxOpenConns != 10 {
 		t.Errorf("DBMaxOpenConns = %d, se esperaba %d", cfg.DBMaxOpenConns, 10)
@@ -64,14 +64,14 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	if cfg.DBConnMaxLifetimeMinutes != 30 {
 		t.Errorf("DBConnMaxLifetimeMinutes = %d, se esperaba %d", cfg.DBConnMaxLifetimeMinutes, 30)
 	}
-	if cfg.DBQueryTimeoutSeconds != 7 {
-		t.Errorf("DBQueryTimeoutSeconds = %d, se esperaba %d", cfg.DBQueryTimeoutSeconds, 7)
+	if cfg.DBQueryTimeoutSeconds != 2 {
+		t.Errorf("DBQueryTimeoutSeconds = %d, se esperaba %d", cfg.DBQueryTimeoutSeconds, 2)
 	}
 	if cfg.HTTPReadTimeoutSeconds != 5 {
 		t.Errorf("HTTPReadTimeoutSeconds = %d, se esperaba %d", cfg.HTTPReadTimeoutSeconds, 5)
 	}
-	if cfg.HTTPWriteTimeoutSeconds != 10 {
-		t.Errorf("HTTPWriteTimeoutSeconds = %d, se esperaba %d", cfg.HTTPWriteTimeoutSeconds, 10)
+	if cfg.HTTPWriteTimeoutSeconds != 6 {
+		t.Errorf("HTTPWriteTimeoutSeconds = %d, se esperaba %d", cfg.HTTPWriteTimeoutSeconds, 6)
 	}
 	if cfg.HTTPIdleTimeoutSeconds != 60 {
 		t.Errorf("HTTPIdleTimeoutSeconds = %d, se esperaba %d", cfg.HTTPIdleTimeoutSeconds, 60)

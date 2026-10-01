@@ -77,7 +77,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	dbStatementTimeoutMS, err := parseIntEnv("DB_STATEMENT_TIMEOUT_MS", 5000)
+	dbStatementTimeoutMS, err := parseIntEnv("DB_STATEMENT_TIMEOUT_MS", 1500)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	dbQueryTimeoutSeconds, err := parseIntEnv("DB_QUERY_TIMEOUT_SECONDS", 7)
+	dbQueryTimeoutSeconds, err := parseIntEnv("DB_QUERY_TIMEOUT_SECONDS", 2)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	httpWriteTimeoutSeconds, err := parseIntEnv("HTTP_WRITE_TIMEOUT_SECONDS", 10)
+	httpWriteTimeoutSeconds, err := parseIntEnv("HTTP_WRITE_TIMEOUT_SECONDS", 6)
 	if err != nil {
 		return nil, err
 	}
