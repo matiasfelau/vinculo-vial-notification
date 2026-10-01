@@ -11,8 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
-
 	"github.com/matiasfelau/vinculo-vial-notification/internal/client/fcm"
 	deliveryhttp "github.com/matiasfelau/vinculo-vial-notification/internal/delivery/http"
 	deliveryworker "github.com/matiasfelau/vinculo-vial-notification/internal/delivery/worker"
@@ -112,7 +110,7 @@ func main() {
 	workers.Add(2)
 
 	go runWorker(&workers, "alert.created", func() {
-		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, cfg.RabbitMQPrefetch, alertBrokerStatus, func(channel *amqp.Channel) *deliveryworker.Consumer {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, cfg.RabbitMQPrefetch, alertBrokerStatus, func(channel deliveryworker.AMQPChannel) *deliveryworker.Consumer {
 			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
 			handler := deliveryworker.NewAlertCreatedHandler(dispatchAlertService, deadLetters, int64(cfg.MaxRetries))
 			return deliveryworker.NewConsumer(channel, cfg.AlertQueue, handler)
@@ -120,7 +118,7 @@ func main() {
 	})
 
 	go runWorker(&workers, "user.sessions.revoked", func() {
-		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.SessionsRevokedQueue, cfg.RabbitMQPrefetch, sessionsBrokerStatus, func(channel *amqp.Channel) *deliveryworker.Consumer {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.SessionsRevokedQueue, cfg.RabbitMQPrefetch, sessionsBrokerStatus, func(channel deliveryworker.AMQPChannel) *deliveryworker.Consumer {
 			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
 			handler := deliveryworker.NewSessionsRevokedHandler(revokeSessionsService, deadLetters, int64(cfg.MaxRetries))
 			return deliveryworker.NewConsumer(channel, cfg.SessionsRevokedQueue, handler)

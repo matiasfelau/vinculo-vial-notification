@@ -17,7 +17,7 @@ const (
 // abierto. Se invoca en cada intento de conexion exitoso: nunca debe
 // declarar exchanges, colas ni bindings, solo consumir y publicar
 // sobre la topologia que ya declaro vinculo-vial-core.
-type ConsumerFactory func(channel *amqp.Channel) *Consumer
+type ConsumerFactory func(channel AMQPChannel) *Consumer
 
 // RunWithReconnect mantiene un consumer activo ante caidas del
 // broker. Ante un error de conexion o la perdida del canal, espera un
@@ -76,36 +76,48 @@ func RunWithReconnect(ctx context.Context, amqpURL, queue string, prefetch int, 
 	}
 }
 
-func dial(amqpURL string, prefetch int) (*amqp.Connection, *amqp.Channel, error) {
+func dial(amqpURL string, prefetch int) (*amqp.Connection, AMQPChannel, error) {
 	conn, err := amqp.Dial(amqpURL)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	channel, err := conn.Channel()
+	rawChannel, err := conn.Channel()
 	if err != nil {
 		conn.Close()
 		return nil, nil, err
 	}
 
-	if err := channel.Qos(prefetch, 0, false); err != nil {
+	channel := newRealAMQPChannel(rawChannel)
+
+	if err := configureChannel(channel, prefetch); err != nil {
 		channel.Close()
 		conn.Close()
 		return nil, nil, err
 	}
 
-	// Modo confirm: requerido para que AMQPDeadLetterPublisher pueda
-	// esperar la confirmacion del broker antes de que el handler ACKee
-	// el mensaje original.
+	return conn, channel, nil
+}
+
+// configureChannel aplica sobre channel la configuracion que todo
+// consumer o publisher de este servicio necesita: prefetch acotado
+// (basic.qos), modo confirm (requerido para que
+// AMQPDeadLetterPublisher pueda esperar la confirmacion del broker
+// antes de que el handler ACKee el mensaje original) y el listener de
+// devoluciones. Separado de dial para poder probarlo con un doble del
+// canal, sin depender de un broker real.
+func configureChannel(channel AMQPChannel, prefetch int) error {
+	if err := channel.Qos(prefetch, 0, false); err != nil {
+		return err
+	}
+
 	if err := channel.Confirm(false); err != nil {
-		channel.Close()
-		conn.Close()
-		return nil, nil, err
+		return err
 	}
 
 	go logUnroutableReturns(channel.NotifyReturn(make(chan amqp.Return, 1)))
 
-	return conn, channel, nil
+	return nil
 }
 
 // logUnroutableReturns consume las devoluciones de mensajes

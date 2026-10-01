@@ -26,12 +26,12 @@ type messageHandler interface {
 // handler sobre cada delivery. El ACK es siempre manual: la cola se
 // declara con autoAck en false.
 type Consumer struct {
-	channel *amqp.Channel
+	channel consumeChannel
 	queue   string
 	handler messageHandler
 }
 
-func NewConsumer(channel *amqp.Channel, queue string, handler messageHandler) *Consumer {
+func NewConsumer(channel consumeChannel, queue string, handler messageHandler) *Consumer {
 	return &Consumer{channel: channel, queue: queue, handler: handler}
 }
 
