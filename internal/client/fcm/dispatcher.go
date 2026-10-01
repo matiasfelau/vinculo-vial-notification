@@ -7,6 +7,7 @@ import (
 	"firebase.google.com/go/v4/messaging"
 
 	"github.com/matiasfelau/vinculo-vial-notification/internal/domain"
+	"github.com/matiasfelau/vinculo-vial-notification/pkg/breaker"
 )
 
 const (
@@ -36,6 +37,7 @@ type Dispatcher struct {
 	client    multicastSender
 	batchSize int
 	timeout   time.Duration
+	breaker   *breaker.Breaker
 }
 
 // NewDispatcher construye el Dispatcher. timeout acota cada llamada
@@ -43,8 +45,12 @@ type Dispatcher struct {
 // proveedor bloquearia el worker para siempre, dejando la cola sin
 // consumirse mientras el proceso sigue respondiendo HTTP con
 // normalidad. timeout <= 0 desactiva el limite.
-func NewDispatcher(client *messaging.Client, batchSize int, timeout time.Duration) *Dispatcher {
-	return &Dispatcher{client: client, batchSize: batchSize, timeout: timeout}
+//
+// cb protege la dependencia con un circuit breaker: con el circuito
+// abierto, Dispatch falla de inmediato sin llamar al SDK. cb nil
+// desactiva el breaker (todas las llamadas se intentan).
+func NewDispatcher(client *messaging.Client, batchSize int, timeout time.Duration, cb *breaker.Breaker) *Dispatcher {
+	return &Dispatcher{client: client, batchSize: batchSize, timeout: timeout, breaker: cb}
 }
 
 var _ domain.Dispatcher = (*Dispatcher)(nil)
@@ -72,11 +78,35 @@ func (d *Dispatcher) Dispatch(ctx context.Context, tokens []string, alertType st
 	return outcomes, nil
 }
 
-// sendBatch envia un unico lote acotando el tiempo de espera al SDK
-// con un timeout propio, independiente del ctx del llamador. Cada
-// lote recibe su propio presupuesto de tiempo: un despacho con varios
-// lotes no debe repartir un unico timeout entre todos.
+// sendBatch envia un unico lote. Con el breaker abierto, falla de
+// inmediato sin tocar la red (ErrOpen). El resultado de la llamada al
+// SDK se reporta al breaker: solo un fallo de transporte del SDK
+// (timeout, error de conexion) cuenta como falla de la dependencia.
+// Un rechazo de negocio para un token puntual (Unregistered,
+// InvalidArgument) viaja dentro de una respuesta exitosa del SDK y se
+// reporta como exito del circuito, igual que un 4xx de un upstream
+// HTTP no abre un breaker HTTP.
 func (d *Dispatcher) sendBatch(ctx context.Context, message *messaging.MulticastMessage) (*messaging.BatchResponse, error) {
+	if d.breaker != nil {
+		if err := d.breaker.Allow(); err != nil {
+			return nil, err
+		}
+	}
+
+	response, err := d.sendWithTimeout(ctx, message)
+
+	if d.breaker != nil {
+		d.breaker.Report(err == nil)
+	}
+
+	return response, err
+}
+
+// sendWithTimeout acota el tiempo de espera al SDK con un timeout
+// propio, independiente del ctx del llamador. Cada lote recibe su
+// propio presupuesto de tiempo: un despacho con varios lotes no debe
+// repartir un unico timeout entre todos.
+func (d *Dispatcher) sendWithTimeout(ctx context.Context, message *messaging.MulticastMessage) (*messaging.BatchResponse, error) {
 	if d.timeout <= 0 {
 		return d.client.SendEachForMulticast(ctx, message)
 	}
