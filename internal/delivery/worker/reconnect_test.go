@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -40,5 +41,48 @@ func TestSleepOrDone_DevuelveFalseAnteCancelacion(t *testing.T) {
 
 	if sleepOrDone(ctx, time.Minute) {
 		t.Fatal("se esperaba false ante un contexto ya cancelado")
+	}
+}
+
+func TestConfigureChannel_AplicaQosConElPrefetchConfigurado(t *testing.T) {
+	channel := &fakeAMQPChannel{}
+
+	if err := configureChannel(channel, 42); err != nil {
+		t.Fatalf("configureChannel() devolvio un error inesperado: %v", err)
+	}
+
+	if len(channel.qosCalls) != 1 {
+		t.Fatalf("se esperaba 1 llamada a Qos, se hicieron %d", len(channel.qosCalls))
+	}
+	if channel.qosCalls[0].prefetchCount != 42 {
+		t.Errorf("prefetchCount = %d, se esperaba %d", channel.qosCalls[0].prefetchCount, 42)
+	}
+	if channel.qosCalls[0].global {
+		t.Error("global deberia ser false: el prefetch es por canal, no por conexion")
+	}
+	if channel.confirmCalls != 1 {
+		t.Errorf("Confirm() deberia haberse invocado exactamente una vez, se invoco %d veces", channel.confirmCalls)
+	}
+	if channel.notifyReturnCalls != 1 {
+		t.Errorf("NotifyReturn() deberia haberse invocado exactamente una vez, se invoco %d veces", channel.notifyReturnCalls)
+	}
+}
+
+func TestConfigureChannel_PropagaElErrorDeQosSinLlamarAConfirm(t *testing.T) {
+	channel := &fakeAMQPChannel{qosErr: errors.New("qos no soportado")}
+
+	if err := configureChannel(channel, 10); err == nil {
+		t.Fatal("se esperaba que configureChannel propagara el error de Qos")
+	}
+	if channel.confirmCalls != 0 {
+		t.Errorf("Confirm() no deberia invocarse si Qos fallo, se invoco %d veces", channel.confirmCalls)
+	}
+}
+
+func TestConfigureChannel_PropagaElErrorDeConfirm(t *testing.T) {
+	channel := &fakeAMQPChannel{confirmErr: errors.New("confirm no soportado")}
+
+	if err := configureChannel(channel, 10); err == nil {
+		t.Fatal("se esperaba que configureChannel propagara el error de Confirm")
 	}
 }

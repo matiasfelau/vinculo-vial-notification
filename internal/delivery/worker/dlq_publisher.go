@@ -25,10 +25,10 @@ var errDLQNotConfirmed = errors.New("la dlq no confirmo la publicacion")
 // exchanges, colas ni bindings: solo publica sobre topologia
 // preexistente.
 type AMQPDeadLetterPublisher struct {
-	channel *amqp.Channel
+	channel publishChannel
 }
 
-func NewAMQPDeadLetterPublisher(channel *amqp.Channel) *AMQPDeadLetterPublisher {
+func NewAMQPDeadLetterPublisher(channel publishChannel) *AMQPDeadLetterPublisher {
 	return &AMQPDeadLetterPublisher{channel: channel}
 }
 
