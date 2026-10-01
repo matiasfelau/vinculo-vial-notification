@@ -162,13 +162,13 @@ func TestTokenHandler_RegisterAnteDependenciaCaida_DevuelveServiceUnavailable(t 
 	}
 }
 
-func TestTokenHandler_RegisterAnteErrorInesperadoDeLaBase_DevuelveBadGateway(t *testing.T) {
+func TestTokenHandler_RegisterAnteErrorInesperadoDeLaBase_DevuelveInternalServerError(t *testing.T) {
 	router := newFailingTestRouter(errors.New("violacion de constraint inesperada"))
 
 	rec := doTokenRequest(router, http.MethodPost, uuid.New().String(), "token-1")
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
 	}
 }
 
@@ -182,12 +182,12 @@ func TestTokenHandler_DeleteAnteDependenciaCaida_DevuelveServiceUnavailable(t *t
 	}
 }
 
-func TestTokenHandler_DeleteAnteErrorInesperadoDeLaBase_DevuelveBadGateway(t *testing.T) {
+func TestTokenHandler_DeleteAnteErrorInesperadoDeLaBase_DevuelveInternalServerError(t *testing.T) {
 	router := newFailingTestRouter(errors.New("violacion de constraint inesperada"))
 
 	rec := doTokenRequest(router, http.MethodDelete, uuid.New().String(), "token-1")
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
 	}
 }
