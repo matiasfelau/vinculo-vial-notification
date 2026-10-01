@@ -8,6 +8,9 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	t.Setenv("FCM_BATCH_SIZE", "")
 	t.Setenv("FCM_TIMEOUT_SECONDS", "")
 	t.Setenv("RABBITMQ_PREFETCH", "")
+	t.Setenv("FCM_BREAKER_FAILURE_THRESHOLD", "")
+	t.Setenv("FCM_BREAKER_WINDOW_SECONDS", "")
+	t.Setenv("FCM_BREAKER_OPEN_SECONDS", "")
 	t.Setenv("DB_STATEMENT_TIMEOUT_MS", "")
 	t.Setenv("DB_MAX_OPEN_CONNS", "")
 	t.Setenv("DB_MAX_IDLE_CONNS", "")
@@ -39,6 +42,15 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	}
 	if cfg.RabbitMQPrefetch != 10 {
 		t.Errorf("RabbitMQPrefetch = %d, se esperaba %d", cfg.RabbitMQPrefetch, 10)
+	}
+	if cfg.FCMBreakerFailureThreshold != 5 {
+		t.Errorf("FCMBreakerFailureThreshold = %d, se esperaba %d", cfg.FCMBreakerFailureThreshold, 5)
+	}
+	if cfg.FCMBreakerWindowSeconds != 60 {
+		t.Errorf("FCMBreakerWindowSeconds = %d, se esperaba %d", cfg.FCMBreakerWindowSeconds, 60)
+	}
+	if cfg.FCMBreakerOpenSeconds != 30 {
+		t.Errorf("FCMBreakerOpenSeconds = %d, se esperaba %d", cfg.FCMBreakerOpenSeconds, 30)
 	}
 	if cfg.DBStatementTimeoutMS != 5000 {
 		t.Errorf("DBStatementTimeoutMS = %d, se esperaba %d", cfg.DBStatementTimeoutMS, 5000)
@@ -79,6 +91,9 @@ func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
 	t.Setenv("FCM_BATCH_SIZE", "250")
 	t.Setenv("FCM_TIMEOUT_SECONDS", "20")
 	t.Setenv("RABBITMQ_PREFETCH", "50")
+	t.Setenv("FCM_BREAKER_FAILURE_THRESHOLD", "8")
+	t.Setenv("FCM_BREAKER_WINDOW_SECONDS", "90")
+	t.Setenv("FCM_BREAKER_OPEN_SECONDS", "45")
 	t.Setenv("DB_STATEMENT_TIMEOUT_MS", "3000")
 	t.Setenv("DB_MAX_OPEN_CONNS", "25")
 	t.Setenv("DB_MAX_IDLE_CONNS", "8")
@@ -110,6 +125,15 @@ func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
 	}
 	if cfg.RabbitMQPrefetch != 50 {
 		t.Errorf("RabbitMQPrefetch = %d, se esperaba %d", cfg.RabbitMQPrefetch, 50)
+	}
+	if cfg.FCMBreakerFailureThreshold != 8 {
+		t.Errorf("FCMBreakerFailureThreshold = %d, se esperaba %d", cfg.FCMBreakerFailureThreshold, 8)
+	}
+	if cfg.FCMBreakerWindowSeconds != 90 {
+		t.Errorf("FCMBreakerWindowSeconds = %d, se esperaba %d", cfg.FCMBreakerWindowSeconds, 90)
+	}
+	if cfg.FCMBreakerOpenSeconds != 45 {
+		t.Errorf("FCMBreakerOpenSeconds = %d, se esperaba %d", cfg.FCMBreakerOpenSeconds, 45)
 	}
 	if cfg.DBStatementTimeoutMS != 3000 {
 		t.Errorf("DBStatementTimeoutMS = %d, se esperaba %d", cfg.DBStatementTimeoutMS, 3000)
@@ -166,6 +190,30 @@ func TestLoad_ErrorSiRabbitMQPrefetchNoEsNumerico(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() debia devolver un error ante RABBITMQ_PREFETCH invalido")
+	}
+}
+
+func TestLoad_ErrorSiFCMBreakerFailureThresholdNoEsNumerico(t *testing.T) {
+	t.Setenv("FCM_BREAKER_FAILURE_THRESHOLD", "no-numerico")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() debia devolver un error ante FCM_BREAKER_FAILURE_THRESHOLD invalido")
+	}
+}
+
+func TestLoad_ErrorSiFCMBreakerWindowSecondsNoEsNumerico(t *testing.T) {
+	t.Setenv("FCM_BREAKER_WINDOW_SECONDS", "no-numerico")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() debia devolver un error ante FCM_BREAKER_WINDOW_SECONDS invalido")
+	}
+}
+
+func TestLoad_ErrorSiFCMBreakerOpenSecondsNoEsNumerico(t *testing.T) {
+	t.Setenv("FCM_BREAKER_OPEN_SECONDS", "no-numerico")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() debia devolver un error ante FCM_BREAKER_OPEN_SECONDS invalido")
 	}
 }
 

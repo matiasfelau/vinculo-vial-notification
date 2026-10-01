@@ -23,6 +23,10 @@ type Config struct {
 	FCMTimeoutSeconds       int
 	RabbitMQPrefetch        int
 
+	FCMBreakerFailureThreshold int
+	FCMBreakerWindowSeconds    int
+	FCMBreakerOpenSeconds      int
+
 	DBStatementTimeoutMS     int
 	DBMaxOpenConns           int
 	DBMaxIdleConns           int
@@ -54,6 +58,21 @@ func Load() (*Config, error) {
 	}
 
 	rabbitMQPrefetch, err := parseIntEnv("RABBITMQ_PREFETCH", 10)
+	if err != nil {
+		return nil, err
+	}
+
+	fcmBreakerFailureThreshold, err := parseIntEnv("FCM_BREAKER_FAILURE_THRESHOLD", 5)
+	if err != nil {
+		return nil, err
+	}
+
+	fcmBreakerWindowSeconds, err := parseIntEnv("FCM_BREAKER_WINDOW_SECONDS", 60)
+	if err != nil {
+		return nil, err
+	}
+
+	fcmBreakerOpenSeconds, err := parseIntEnv("FCM_BREAKER_OPEN_SECONDS", 30)
 	if err != nil {
 		return nil, err
 	}
@@ -110,6 +129,10 @@ func Load() (*Config, error) {
 		FCMBatchSize:            fcmBatchSize,
 		FCMTimeoutSeconds:       fcmTimeoutSeconds,
 		RabbitMQPrefetch:        rabbitMQPrefetch,
+
+		FCMBreakerFailureThreshold: fcmBreakerFailureThreshold,
+		FCMBreakerWindowSeconds:    fcmBreakerWindowSeconds,
+		FCMBreakerOpenSeconds:      fcmBreakerOpenSeconds,
 
 		DBStatementTimeoutMS:     dbStatementTimeoutMS,
 		DBMaxOpenConns:           dbMaxOpenConns,

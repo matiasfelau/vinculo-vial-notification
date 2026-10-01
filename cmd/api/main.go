@@ -20,6 +20,7 @@ import (
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/dispatch"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/sessions"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/tokens"
+	"github.com/matiasfelau/vinculo-vial-notification/pkg/breaker"
 	"github.com/matiasfelau/vinculo-vial-notification/pkg/config"
 )
 
@@ -97,7 +98,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("no se pudo inicializar el cliente de firebase: %v", err)
 	}
-	fcmDispatcher := fcm.NewDispatcher(messagingClient, cfg.FCMBatchSize, time.Duration(cfg.FCMTimeoutSeconds)*time.Second)
+	fcmBreaker := breaker.New(breaker.Config{
+		FailureThreshold: cfg.FCMBreakerFailureThreshold,
+		Window:           time.Duration(cfg.FCMBreakerWindowSeconds) * time.Second,
+		OpenDuration:     time.Duration(cfg.FCMBreakerOpenSeconds) * time.Second,
+	})
+	fcmDispatcher := fcm.NewDispatcher(messagingClient, cfg.FCMBatchSize, time.Duration(cfg.FCMTimeoutSeconds)*time.Second, fcmBreaker)
 
 	dispatchAlertService := dispatch.NewDispatchAlertService(notificationLogRepository, deviceTokenRepository, fcmDispatcher)
 	revokeSessionsService := sessions.NewRevokeSessionsService(notificationLogRepository, deviceTokenRepository)

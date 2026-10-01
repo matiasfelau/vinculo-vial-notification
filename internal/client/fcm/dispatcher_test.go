@@ -11,6 +11,7 @@ import (
 	"firebase.google.com/go/v4/messaging"
 
 	"github.com/matiasfelau/vinculo-vial-notification/internal/domain"
+	"github.com/matiasfelau/vinculo-vial-notification/pkg/breaker"
 )
 
 // fakeMulticastSender responde con la secuencia de resultados
@@ -188,5 +189,75 @@ func TestDispatcher_SinTimeoutConfiguradoUsaElContextoDelLlamador(t *testing.T) 
 	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque")
 	if err != nil {
 		t.Fatalf("Dispatch() devolvio un error inesperado: %v", err)
+	}
+}
+
+func TestDispatcher_ConElCircuitoAbierto_NoLlamaAlSDK(t *testing.T) {
+	cb := breaker.New(breaker.Config{FailureThreshold: 1, Window: time.Minute, OpenDuration: time.Minute})
+	cb.Report(false) // una sola falla alcanza el umbral de 1 y abre el circuito
+
+	sender := &fakeMulticastSender{}
+	dispatcher := &Dispatcher{client: sender, batchSize: 500, breaker: cb}
+
+	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque")
+
+	if !errors.Is(err, breaker.ErrOpen) {
+		t.Fatalf("error = %v, se esperaba breaker.ErrOpen", err)
+	}
+	if len(sender.calls) != 0 {
+		t.Fatalf("se esperaban 0 llamadas al SDK con el circuito abierto, se hicieron %d", len(sender.calls))
+	}
+}
+
+func TestDispatcher_FalloDeTransporteDelSDK_CuentaComoFallaParaElBreaker(t *testing.T) {
+	cb := breaker.New(breaker.Config{FailureThreshold: 1, Window: time.Minute, OpenDuration: time.Hour})
+	sender := &fakeMulticastSender{
+		responses: []*messaging.BatchResponse{nil},
+		errs:      []error{errors.New("fcm no disponible")},
+	}
+	dispatcher := &Dispatcher{client: sender, batchSize: 500, breaker: cb}
+
+	if _, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque"); err == nil {
+		t.Fatal("se esperaba que se propagara el error del SDK")
+	}
+
+	if cb.State() != breaker.StateOpen {
+		t.Fatalf("estado del breaker tras el fallo = %v, se esperaba StateOpen", cb.State())
+	}
+}
+
+func TestDispatcher_RechazoPorTokenInvalido_NoCuentaComoFallaParaElBreaker(t *testing.T) {
+	cb := breaker.New(breaker.Config{FailureThreshold: 1, Window: time.Minute, OpenDuration: time.Hour})
+	sender := &fakeMulticastSender{
+		responses: []*messaging.BatchResponse{
+			{
+				Responses: []*messaging.SendResponse{
+					{Success: false, Error: errors.New("unregistered")},
+				},
+			},
+		},
+	}
+	dispatcher := &Dispatcher{client: sender, batchSize: 500, breaker: cb}
+
+	// El SDK respondio con exito a nivel de transporte: el rechazo es
+	// por token, no por disponibilidad del proveedor.
+	if _, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque"); err != nil {
+		t.Fatalf("Dispatch() devolvio un error inesperado: %v", err)
+	}
+
+	if cb.State() != breaker.StateClosed {
+		t.Fatalf("un rechazo por token no deberia abrir el breaker, estado = %v", cb.State())
+	}
+}
+
+func TestDispatcher_SinBreakerConfigurado_SiempreIntentaLaLlamada(t *testing.T) {
+	sender := &fakeMulticastSender{responses: []*messaging.BatchResponse{successResponses(1)}}
+	dispatcher := &Dispatcher{client: sender, batchSize: 500, breaker: nil}
+
+	if _, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque"); err != nil {
+		t.Fatalf("Dispatch() devolvio un error inesperado: %v", err)
+	}
+	if len(sender.calls) != 1 {
+		t.Fatalf("se esperaba 1 llamada al SDK, se hicieron %d", len(sender.calls))
 	}
 }
