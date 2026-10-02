@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,15 +17,35 @@ import (
 // veces se disparo el envio y con que tokens. Los tokens listados en
 // invalidTokens se devuelven marcados como Invalid, simulando una
 // respuesta Unregistered o InvalidArgument de FCM.
+//
+// Es seguro para uso concurrente. started y release permiten
+// controlar una entrega en vuelo: started recibe una senial cuando
+// Dispatch arranca, y Dispatch espera en release (si no es nil) antes
+// de responder.
 type fakeDispatcher struct {
+	mu            sync.Mutex
 	calls         [][]string
 	err           error
+	failFirst     int // con err != nil: 0 = falla siempre; N = falla solo las primeras N llamadas
 	invalidTokens map[string]bool
+	started       chan struct{}
+	release       chan struct{}
 }
 
 func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, _ string) ([]domain.DispatchOutcome, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, tokens)
-	if f.err != nil {
+	attempt := len(f.calls)
+	f.mu.Unlock()
+
+	if f.started != nil {
+		f.started <- struct{}{}
+	}
+	if f.release != nil {
+		<-f.release
+	}
+
+	if f.err != nil && (f.failFirst == 0 || attempt <= f.failFirst) {
 		return nil, f.err
 	}
 
@@ -36,11 +57,17 @@ func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, _ string) 
 	return outcomes, nil
 }
 
+func (f *fakeDispatcher) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
 func setup() (*DispatchAlertService, *memory.DeviceTokenRepository, *memory.NotificationLogRepository, *fakeDispatcher) {
 	deviceTokens := memory.NewDeviceTokenRepository()
 	notificationLogs := memory.NewNotificationLogRepository()
 	dispatcher := &fakeDispatcher{}
-	service := NewDispatchAlertService(notificationLogs, deviceTokens, dispatcher)
+	service := NewDispatchAlertService(memory.NewUnitOfWork(notificationLogs, deviceTokens), deviceTokens, dispatcher)
 	return service, deviceTokens, notificationLogs, dispatcher
 }
 
@@ -125,9 +152,10 @@ func TestDispatchAlertService_RegistraSentTrasUnDespachoExitoso(t *testing.T) {
 	}
 }
 
-func TestDispatchAlertService_PropagaElErrorDelDispatcherYNoMarcaSent(t *testing.T) {
+func TestDispatchAlertService_FalloDeFCM_RevierteElRegistroYElReintentoVuelveAEnviar(t *testing.T) {
 	service, deviceTokens, notificationLogs, dispatcher := setup()
 	dispatcher.err = errors.New("fcm no disponible")
+	dispatcher.failFirst = 1
 	ctx := context.Background()
 
 	owner := uuid.New()
@@ -138,12 +166,105 @@ func TestDispatchAlertService_PropagaElErrorDelDispatcherYNoMarcaSent(t *testing
 		t.Fatal("se esperaba que Execute() propagara el error del dispatcher")
 	}
 
-	stored, ok := notificationLogs.Get(event.EventID)
-	if !ok {
-		t.Fatalf("se esperaba un registro para el evento %s", event.EventID)
+	// Rollback: el event_id no quedo registrado. Si quedara, el
+	// reintento (NACK) se descartaria como duplicado y la push se
+	// perderia.
+	if _, ok := notificationLogs.Get(event.EventID); ok {
+		t.Fatal("tras un fallo de FCM el event_id no deberia estar registrado")
 	}
-	if stored.Status == domain.StatusSent {
-		t.Fatalf("el status no deberia haberse marcado como SENT tras un fallo del dispatcher")
+
+	if err := service.Execute(ctx, event); err != nil {
+		t.Fatalf("Execute() del reintento devolvio un error inesperado: %v", err)
+	}
+	if dispatcher.callCount() != 2 {
+		t.Fatalf("se esperaban 2 intentos de despacho (el fallido y el reintento), se hicieron %d", dispatcher.callCount())
+	}
+
+	stored, ok := notificationLogs.Get(event.EventID)
+	if !ok || stored.Status != domain.StatusSent {
+		t.Fatalf("tras el reintento exitoso se esperaba un registro SENT, se obtuvo %+v (existe=%v)", stored, ok)
+	}
+}
+
+func TestDispatchAlertService_DosEntregasConcurrentes_UnSoloEnvio(t *testing.T) {
+	service, deviceTokens, notificationLogs, dispatcher := setup()
+	dispatcher.started = make(chan struct{}, 2)
+	dispatcher.release = make(chan struct{})
+	ctx := context.Background()
+
+	owner := uuid.New()
+	_ = deviceTokens.Upsert(ctx, &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1", UpdatedAt: time.Now()})
+	event := AlertCreatedEvent{EventID: uuid.New(), OwnerIDs: []uuid.UUID{owner}, AlertType: "choque"}
+
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+
+	go func() { first <- service.Execute(ctx, event) }()
+	<-dispatcher.started // la primera esta dentro del despacho, con el event_id reservado
+
+	go func() { second <- service.Execute(ctx, event) }()
+	time.Sleep(50 * time.Millisecond) // la segunda queda esperando en la clave unica
+
+	select {
+	case err := <-second:
+		t.Fatalf("la entrega duplicada no deberia terminar mientras la primera sigue abierta (err=%v)", err)
+	default:
+	}
+
+	close(dispatcher.release)
+
+	if err := <-first; err != nil {
+		t.Fatalf("Execute() de la primera entrega devolvio un error inesperado: %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("Execute() de la entrega duplicada devolvio un error inesperado: %v", err)
+	}
+
+	if dispatcher.callCount() != 1 {
+		t.Fatalf("se esperaba un unico envio entre dos entregas concurrentes, se hicieron %d", dispatcher.callCount())
+	}
+	if _, ok := notificationLogs.Get(event.EventID); !ok {
+		t.Fatal("se esperaba el event_id registrado tras confirmar la primera entrega")
+	}
+}
+
+func TestDispatchAlertService_PrimeraEntregaFalla_LaDuplicadaEnEsperaTomaElRelevo(t *testing.T) {
+	service, deviceTokens, notificationLogs, dispatcher := setup()
+	dispatcher.err = errors.New("fcm no disponible")
+	dispatcher.failFirst = 1
+	dispatcher.started = make(chan struct{}, 2)
+	dispatcher.release = make(chan struct{})
+	ctx := context.Background()
+
+	owner := uuid.New()
+	_ = deviceTokens.Upsert(ctx, &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1", UpdatedAt: time.Now()})
+	event := AlertCreatedEvent{EventID: uuid.New(), OwnerIDs: []uuid.UUID{owner}, AlertType: "choque"}
+
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+
+	go func() { first <- service.Execute(ctx, event) }()
+	<-dispatcher.started
+
+	go func() { second <- service.Execute(ctx, event) }()
+	time.Sleep(50 * time.Millisecond)
+
+	close(dispatcher.release)
+
+	if err := <-first; err == nil {
+		t.Fatal("se esperaba que la primera entrega fallara (FCM caido)")
+	}
+	// La primera revirtio: la duplicada que esperaba no es un duplicado
+	// real, asi que procede y envia.
+	if err := <-second; err != nil {
+		t.Fatalf("la entrega que esperaba deberia haber procedido y enviado, devolvio: %v", err)
+	}
+
+	if dispatcher.callCount() != 2 {
+		t.Fatalf("se esperaban 2 despachos (el fallido y el de la entrega que tomo el relevo), se hicieron %d", dispatcher.callCount())
+	}
+	if _, ok := notificationLogs.Get(event.EventID); !ok {
+		t.Fatal("se esperaba el event_id registrado tras el envio exitoso")
 	}
 }
 

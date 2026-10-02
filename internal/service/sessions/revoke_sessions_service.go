@@ -24,36 +24,38 @@ type SessionsRevokedEvent struct {
 // secuestro de sesion, corta las notificaciones a todos los
 // dispositivos del usuario, incluido el del atacante.
 type RevokeSessionsService struct {
-	notificationLogs domain.NotificationLogRepository
-	deviceTokens     domain.DeviceTokenRepository
+	unitOfWork domain.UnitOfWork
 }
 
-func NewRevokeSessionsService(notificationLogs domain.NotificationLogRepository, deviceTokens domain.DeviceTokenRepository) *RevokeSessionsService {
-	return &RevokeSessionsService{notificationLogs: notificationLogs, deviceTokens: deviceTokens}
+func NewRevokeSessionsService(unitOfWork domain.UnitOfWork) *RevokeSessionsService {
+	return &RevokeSessionsService{unitOfWork: unitOfWork}
 }
 
-// Execute aplica el mismo tratamiento de idempotencia que
-// DispatchAlertService: el INSERT de deduplicacion se hace antes de la
-// accion. Un fallo del borrado se propaga (a diferencia de la
-// limpieza de tokens invalidos del despacho): dado el rol de este
-// flujo en la defensa activa ante un secuestro de sesion, es
-// preferible que el fallo quede visible via el ciclo de reintentos y
-// termine en la DLQ antes que silenciarlo.
+// Execute registra el event_id y borra los tokens en una misma
+// transaccion. Si el borrado falla, el registro se revierte: el
+// reintento no se descarta como duplicado y vuelve a intentar el
+// borrado (dado el rol de este flujo en la defensa activa, el fallo
+// debe quedar visible via el ciclo de reintentos y terminar en la DLQ,
+// nunca silenciarse). Una entrega duplicada concurrente espera en la
+// clave unica y se descarta cuando la primera confirma.
 func (s *RevokeSessionsService) Execute(ctx context.Context, event SessionsRevokedEvent) error {
-	logEntry := &domain.NotificationLog{
-		ID:          uuid.New(),
-		EventID:     event.EventID,
-		RecipientID: &event.OwnerID,
-		Status:      domain.StatusSent,
-		CreatedAt:   time.Now(),
-	}
-
-	if err := s.notificationLogs.Register(ctx, logEntry); err != nil {
-		if errors.Is(err, domain.ErrEventAlreadyProcessed) {
-			return nil
+	err := s.unitOfWork.Do(ctx, func(tx domain.TxRepositories) error {
+		logEntry := &domain.NotificationLog{
+			ID:          uuid.New(),
+			EventID:     event.EventID,
+			RecipientID: &event.OwnerID,
+			Status:      domain.StatusSent,
+			CreatedAt:   time.Now(),
 		}
-		return err
-	}
 
-	return s.deviceTokens.DeleteByOwnerID(ctx, event.OwnerID)
+		if err := tx.NotificationLogs.Register(ctx, logEntry); err != nil {
+			return err
+		}
+
+		return tx.DeviceTokens.DeleteByOwnerID(ctx, event.OwnerID)
+	})
+	if errors.Is(err, domain.ErrEventAlreadyProcessed) {
+		return nil
+	}
+	return err
 }

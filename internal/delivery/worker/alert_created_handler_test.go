@@ -58,7 +58,7 @@ func TestAlertCreatedHandler_ProcesaUnEventoValido_Ack(t *testing.T) {
 	ownerID := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens), deviceTokens, &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
@@ -73,7 +73,7 @@ func TestAlertCreatedHandler_ProcesaUnEventoValido_Ack(t *testing.T) {
 }
 
 func TestAlertCreatedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
@@ -92,7 +92,7 @@ func TestAlertCreatedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
 }
 
 func TestAlertCreatedHandler_EnvelopeMalFormadoYFalloAlPublicarEnLaDLQ_NackSinRequeue(t *testing.T) {
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
@@ -108,7 +108,7 @@ func TestAlertCreatedHandler_EnvelopeMalFormadoYFalloAlPublicarEnLaDLQ_NackSinRe
 }
 
 func TestAlertCreatedHandler_PayloadSinOwnerIDs_AckYDLQ(t *testing.T) {
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
@@ -132,7 +132,7 @@ func TestAlertCreatedHandler_FalloTransitorioDelDispatcher_NackSinRequeue(t *tes
 	ownerID := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
@@ -151,7 +151,7 @@ func TestAlertCreatedHandler_RedeliveryDelMismoEvento_Ack(t *testing.T) {
 	ownerID := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens), deviceTokens, &fakeDispatcher{})
 	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{}, 3)
 
 	body := validEnvelope(uuid.New().String(), ownerID.String())
@@ -169,7 +169,7 @@ func TestAlertCreatedHandler_FalloTransitorioBajoElLimite_NackSinRequeue(t *test
 	ownerID := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
@@ -189,7 +189,7 @@ func TestAlertCreatedHandler_SuperaMaxRetries_AckYDLQ(t *testing.T) {
 	ownerID := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 
@@ -212,7 +212,7 @@ func TestAlertCreatedHandler_SuperaMaxRetriesYFalloAlPublicarEnLaDLQ_NackSinRequ
 	ownerID := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
 	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 

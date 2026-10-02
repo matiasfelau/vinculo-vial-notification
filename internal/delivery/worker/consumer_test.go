@@ -44,7 +44,7 @@ func TestAlertCreatedConsumer_ProcessConfirmaUnEventoValido(t *testing.T) {
 	ownerID := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens), deviceTokens, &fakeDispatcher{})
 	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{}, 3)
 	consumer := NewConsumer(nil, "notification.alert-created.q", handler)
 
@@ -67,7 +67,7 @@ func TestAlertCreatedConsumer_ProcessRechazaSinRequeueAnteFalloTransitorio(t *te
 	ownerID := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
 	handler := NewAlertCreatedHandler(service, &fakeDeadLetterPublisher{}, 3)
 	consumer := NewConsumer(nil, "notification.alert-created.q", handler)
 
@@ -92,7 +92,7 @@ func TestAlertCreatedConsumer_ProcessRechazaSinRequeueAnteFalloTransitorio(t *te
 }
 
 func TestAlertCreatedConsumer_ProcessConfirmaYDescartaEnvelopeInvalido(t *testing.T) {
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 	consumer := NewConsumer(nil, "notification.alert-created.q", handler)
@@ -121,7 +121,7 @@ func TestAlertCreatedConsumer_ProcessLeeXDeathYCortaAlSuperarMaxRetries(t *testi
 	ownerID := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: ownerID, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := dispatch.NewDispatchAlertService(memory.NewNotificationLogRepository(), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens), deviceTokens, &fakeDispatcher{err: errors.New("fcm no disponible")})
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, 3)
 	consumer := NewConsumer(nil, queue, handler)
