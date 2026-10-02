@@ -72,7 +72,8 @@ func main() {
 	alertBrokerStatus := &deliveryworker.ConnectionStatus{}
 	sessionsBrokerStatus := &deliveryworker.ConnectionStatus{}
 
-	readinessHandler := deliveryhttp.NewReadinessHandler(sqlDB, map[string]deliveryhttp.ConnectionChecker{
+	readinessHandler := deliveryhttp.NewReadinessHandler(sqlDB)
+	depsHealthHandler := deliveryhttp.NewDepsHealthHandler(sqlDB, map[string]deliveryhttp.ConnectionChecker{
 		"rabbitmq_alert_created":    alertBrokerStatus,
 		"rabbitmq_sessions_revoked": sessionsBrokerStatus,
 	})
@@ -80,6 +81,7 @@ func main() {
 	router := deliveryhttp.NewRouter()
 	deliveryhttp.RegisterTokenRoutes(router, tokenHandler)
 	deliveryhttp.RegisterReadinessRoute(router, readinessHandler)
+	deliveryhttp.RegisterDepsHealthRoute(router, depsHealthHandler)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
