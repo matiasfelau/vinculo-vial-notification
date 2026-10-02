@@ -22,10 +22,10 @@ type fakeConnectionChecker struct{ connected bool }
 
 func (c fakeConnectionChecker) Connected() bool { return c.connected }
 
-func newReadinessRouter(dbErr error, brokers map[string]ConnectionChecker) *gin.Engine {
+func newReadinessRouter(dbErr error) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
-	handler := NewReadinessHandler(fakeDBPinger{err: dbErr}, brokers)
+	handler := NewReadinessHandler(fakeDBPinger{err: dbErr})
 	router := NewRouter()
 	RegisterReadinessRoute(router, handler)
 
@@ -39,10 +39,8 @@ func doReadinessRequest(router *gin.Engine) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestReadinessHandler_TodoUp_DevuelveOK(t *testing.T) {
-	router := newReadinessRouter(nil, map[string]ConnectionChecker{
-		"rabbitmq_alert_created": fakeConnectionChecker{connected: true},
-	})
+func TestReadinessHandler_BaseUp_DevuelveOK(t *testing.T) {
+	router := newReadinessRouter(nil)
 
 	rec := doReadinessRequest(router)
 
@@ -52,36 +50,11 @@ func TestReadinessHandler_TodoUp_DevuelveOK(t *testing.T) {
 }
 
 func TestReadinessHandler_BaseCaida_DevuelveServiceUnavailable(t *testing.T) {
-	router := newReadinessRouter(errors.New("conexion rechazada"), map[string]ConnectionChecker{
-		"rabbitmq_alert_created": fakeConnectionChecker{connected: true},
-	})
+	router := newReadinessRouter(errors.New("conexion rechazada"))
 
 	rec := doReadinessRequest(router)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
-	}
-}
-
-func TestReadinessHandler_BrokerDesconectado_DevuelveServiceUnavailable(t *testing.T) {
-	router := newReadinessRouter(nil, map[string]ConnectionChecker{
-		"rabbitmq_alert_created":    fakeConnectionChecker{connected: true},
-		"rabbitmq_sessions_revoked": fakeConnectionChecker{connected: false},
-	})
-
-	rec := doReadinessRequest(router)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
-	}
-}
-
-func TestReadinessHandler_SinBrokersConfigurados_SoloDependeDeLaBase(t *testing.T) {
-	router := newReadinessRouter(nil, map[string]ConnectionChecker{})
-
-	rec := doReadinessRequest(router)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 }

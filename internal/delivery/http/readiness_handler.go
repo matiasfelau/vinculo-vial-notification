@@ -19,27 +19,16 @@ type dbPinger interface {
 	PingContext(ctx context.Context) error
 }
 
-// ConnectionChecker informa si una dependencia esta conectada en este
-// momento. Los workers de RabbitMQ lo implementan a traves de su
-// estado de conexion actual (ver worker.ConnectionStatus).
-type ConnectionChecker interface {
-	Connected() bool
-}
-
-// ReadinessHandler expone el estado real de las dependencias del
-// servicio, a diferencia de /health (liveness pura, sin dependencias).
-// Kong lo usa como healthcheck pasivo para sacar del balanceo una
-// instancia que sigue viva pero no puede cumplir su funcion: un
-// contenedor que responde HTTP pero perdio la conexion con la base o
-// con el broker es el peor estado posible, porque parece sano y no
-// notifica a nadie.
+// ReadinessHandler expone el estado de las dependencias vitales del
+// servicio. /ready chequea solo la base propia y es lo que consultan los
+// healthchecks activos de Kong. Un contenedor que pierde conexion con
+// la base se saca del balanceo.
 type ReadinessHandler struct {
-	db      dbPinger
-	brokers map[string]ConnectionChecker
+	db dbPinger
 }
 
-func NewReadinessHandler(db dbPinger, brokers map[string]ConnectionChecker) *ReadinessHandler {
-	return &ReadinessHandler{db: db, brokers: brokers}
+func NewReadinessHandler(db dbPinger) *ReadinessHandler {
+	return &ReadinessHandler{db: db}
 }
 
 func (h *ReadinessHandler) Handle(c *gin.Context) {
@@ -54,15 +43,6 @@ func (h *ReadinessHandler) Handle(c *gin.Context) {
 		ready = false
 	} else {
 		checks["database"] = "up"
-	}
-
-	for name, checker := range h.brokers {
-		if checker.Connected() {
-			checks[name] = "up"
-		} else {
-			checks[name] = "down"
-			ready = false
-		}
 	}
 
 	status := http.StatusOK
