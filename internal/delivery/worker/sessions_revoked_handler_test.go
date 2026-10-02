@@ -40,7 +40,7 @@ func TestSessionsRevokedHandler_ProcesaUnEventoValido_BorraLosTokensYAck(t *test
 	owner := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), deviceTokens)
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens))
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
 
@@ -59,7 +59,7 @@ func TestSessionsRevokedHandler_ProcesaUnEventoValido_BorraLosTokensYAck(t *test
 }
 
 func TestSessionsRevokedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
-	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository())
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()))
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
 
@@ -74,7 +74,7 @@ func TestSessionsRevokedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
 }
 
 func TestSessionsRevokedHandler_EnvelopeMalFormadoYFalloAlPublicarEnLaDLQ_NackSinRequeue(t *testing.T) {
-	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository())
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()))
 	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
 	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
 
@@ -86,7 +86,7 @@ func TestSessionsRevokedHandler_EnvelopeMalFormadoYFalloAlPublicarEnLaDLQ_NackSi
 }
 
 func TestSessionsRevokedHandler_ActorInvalido_AckYDLQ(t *testing.T) {
-	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository())
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()))
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
 
@@ -106,7 +106,7 @@ func TestSessionsRevokedHandler_RedeliveryDelMismoEvento_SoloUnaBaja(t *testing.
 	owner := uuid.New()
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1", UpdatedAt: time.Now()})
 
-	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), deviceTokens)
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens))
 	handler := NewSessionsRevokedHandler(service, &fakeDeadLetterPublisher{}, 3)
 
 	body := sessionsRevokedEnvelope(uuid.New().String(), owner.String())
@@ -120,7 +120,7 @@ func TestSessionsRevokedHandler_RedeliveryDelMismoEvento_SoloUnaBaja(t *testing.
 
 func TestSessionsRevokedHandler_FalloTransitorioBajoElLimite_NackSinRequeue(t *testing.T) {
 	repo := &failingDeviceTokenRepository{err: errors.New("base caida")}
-	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), repo)
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), repo))
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
 
@@ -137,7 +137,7 @@ func TestSessionsRevokedHandler_FalloTransitorioBajoElLimite_NackSinRequeue(t *t
 
 func TestSessionsRevokedHandler_SuperaMaxRetries_AckYDLQ(t *testing.T) {
 	repo := &failingDeviceTokenRepository{err: errors.New("base caida")}
-	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), repo)
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), repo))
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
 
@@ -154,7 +154,7 @@ func TestSessionsRevokedHandler_SuperaMaxRetries_AckYDLQ(t *testing.T) {
 
 func TestSessionsRevokedHandler_SuperaMaxRetriesYFalloAlPublicarEnLaDLQ_NackSinRequeue(t *testing.T) {
 	repo := &failingDeviceTokenRepository{err: errors.New("base caida")}
-	service := sessions.NewRevokeSessionsService(memory.NewNotificationLogRepository(), repo)
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), repo))
 	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
 	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
 

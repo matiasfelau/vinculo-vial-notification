@@ -62,7 +62,7 @@ func main() {
 
 	queryTimeout := time.Duration(cfg.DBQueryTimeoutSeconds) * time.Second
 	deviceTokenRepository := postgres.NewDeviceTokenRepository(db, queryTimeout)
-	notificationLogRepository := postgres.NewNotificationLogRepository(db, queryTimeout)
+	unitOfWork := postgres.NewUnitOfWork(db, queryTimeout)
 
 	tokenHandler := deliveryhttp.NewTokenHandler(
 		tokens.NewRegisterTokenService(deviceTokenRepository),
@@ -105,8 +105,8 @@ func main() {
 	})
 	fcmDispatcher := fcm.NewDispatcher(messagingClient, cfg.FCMBatchSize, time.Duration(cfg.FCMTimeoutSeconds)*time.Second, fcmBreaker)
 
-	dispatchAlertService := dispatch.NewDispatchAlertService(notificationLogRepository, deviceTokenRepository, fcmDispatcher)
-	revokeSessionsService := sessions.NewRevokeSessionsService(notificationLogRepository, deviceTokenRepository)
+	dispatchAlertService := dispatch.NewDispatchAlertService(unitOfWork, deviceTokenRepository, fcmDispatcher)
+	revokeSessionsService := sessions.NewRevokeSessionsService(unitOfWork)
 
 	var workers sync.WaitGroup
 	workers.Add(2)
