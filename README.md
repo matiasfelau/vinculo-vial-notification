@@ -73,10 +73,18 @@ En CI las corre un paso aparte del workflow, contra un servicio `postgres`.
 `GET /health` responde `200 OK` mientras el proceso este activo. Es una
 sonda de liveness pura: no verifica dependencias externas.
 
-`GET /ready` refleja el estado real de las dependencias (Postgres y ambas
-conexiones a RabbitMQ). Devuelve `200 OK` con `{"status":"ready",...}`
-cuando todas estan disponibles, o `503 Service Unavailable` con
-`{"status":"not_ready",...}` y el detalle por dependencia en caso
-contrario. Pensado como healthcheck pasivo para que Kong saque del
-balanceo una instancia que sigue respondiendo HTTP pero no puede cumplir
-su funcion (perdio la base o el broker).
+`GET /ready` chequea **solo la base de datos propia**. Devuelve `200 OK` con
+`{"status":"ready","checks":{"database":"up"}}`, o `503 Service Unavailable`
+con `{"status":"not_ready","checks":{"database":"down"}}` si el ping a la
+base falla (timeout de 2s). Es el path del healthcheck activo de Kong: si
+falla, Kong saca la instancia del balanceo. Por eso no incluye RabbitMQ:
+registrar y dar de baja tokens FCM opera exclusivamente sobre la base, y un
+broker caido no debe dejar a la instancia sin servir esas rutas.
+
+`GET /health/deps` expone el estado de todas las dependencias: la base y
+las dos conexiones a RabbitMQ (`rabbitmq_alert_created` y
+`rabbitmq_sessions_revoked`, una por cada worker). Mismo formato de
+respuesta que `/ready`: `200 OK` si todas estan arriba, `503` con
+`"status":"not_ready"` y el detalle por dependencia si alguna esta caida.
+Es informativo y **no afecta el balanceo de Kong**: sirve para diagnosticar
+que un worker dejo de consumir aunque la API siga respondiendo.
