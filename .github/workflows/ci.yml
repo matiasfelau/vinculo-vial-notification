@@ -9,6 +9,26 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+
+    # Postgres real para las pruebas de integracion: SQLite y el doble
+    # en memoria no reproducen el bloqueo de un INSERT ... ON CONFLICT
+    # DO NOTHING sobre una fila sin confirmar, que sostiene la
+    # idempotencia por event_id.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: notification_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d notification_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
@@ -36,7 +56,14 @@ jobs:
           fi
 
       - name: Analisis estatico
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet -tags=integration ./...
 
       - name: Ejecutar pruebas
         run: go test ./... -race -cover
+
+      - name: Ejecutar pruebas de integracion (Postgres real)
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/notification_test?sslmode=disable
+        run: go test -tags=integration -race -count=1 -run Integracion -v ./internal/repository/postgres/
