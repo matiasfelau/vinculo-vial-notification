@@ -52,6 +52,22 @@ CGO_ENABLED=0 go build -o notification ./cmd/api
 docker compose up --build
 ```
 
+## Pruebas de integracion
+
+`go test ./...` corre solo pruebas unitarias (SQLite y dobles en memoria).
+La garantia central de idempotencia -dos entregas concurrentes del mismo
+`event_id` producen un solo envio- depende del bloqueo que hace Postgres
+sobre una fila sin confirmar, y se prueba contra un Postgres real, detras
+del build tag `integration`:
+
+```
+docker run -d --name pg-it -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=notification_test -p 5432:5432 postgres:16-alpine
+TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/notification_test?sslmode=disable" \
+  go test -tags=integration -count=1 -run Integracion ./internal/repository/postgres/
+```
+
+En CI las corre un paso aparte del workflow, contra un servicio `postgres`.
+
 ## Salud del servicio
 
 `GET /health` responde `200 OK` mientras el proceso este activo. Es una
