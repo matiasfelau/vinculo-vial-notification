@@ -17,6 +17,11 @@ type ConnectionChecker interface {
 // DepsHealthHandler expone el estado real de todas las dependencias del
 // servicio (base de datos y brokers). Su falla se contiene por ruta y su
 // estado no afecta el balanceo de Kong.
+//
+// Ante una dependencia caida responde 503 con "status":"degraded": la
+// instancia sigue lista para el balanceo (eso lo dice /ready, que solo
+// mira la base), pero opera degradada. Por eso no usa "not_ready", que
+// es el estado de /ready y significaria que Kong debe sacarla.
 type DepsHealthHandler struct {
 	db      dbPinger
 	brokers map[string]ConnectionChecker
@@ -31,11 +36,11 @@ func (h *DepsHealthHandler) Handle(c *gin.Context) {
 	defer cancel()
 
 	checks := gin.H{}
-	ready := true
+	healthy := true
 
 	if err := h.db.PingContext(ctx); err != nil {
 		checks["database"] = "down"
-		ready = false
+		healthy = false
 	} else {
 		checks["database"] = "up"
 	}
@@ -45,15 +50,15 @@ func (h *DepsHealthHandler) Handle(c *gin.Context) {
 			checks[name] = "up"
 		} else {
 			checks[name] = "down"
-			ready = false
+			healthy = false
 		}
 	}
 
 	status := http.StatusOK
 	label := "ready"
-	if !ready {
+	if !healthy {
 		status = http.StatusServiceUnavailable
-		label = "not_ready"
+		label = "degraded"
 	}
 
 	c.JSON(status, gin.H{"status": label, "checks": checks})
