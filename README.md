@@ -84,7 +84,10 @@ broker caido no debe dejar a la instancia sin servir esas rutas.
 `GET /health/deps` expone el estado de todas las dependencias: la base y
 las dos conexiones a RabbitMQ (`rabbitmq_alert_created` y
 `rabbitmq_sessions_revoked`, una por cada worker). Mismo formato de
-respuesta que `/ready`: `200 OK` si todas estan arriba, `503` con
-`"status":"not_ready"` y el detalle por dependencia si alguna esta caida.
-Es informativo y **no afecta el balanceo de Kong**: sirve para diagnosticar
-que un worker dejo de consumir aunque la API siga respondiendo.
+respuesta que `/ready`: `200 OK` con `"status":"ready"` si todas estan
+arriba, o `503` con `"status":"degraded"` y el detalle por dependencia si
+alguna esta caida (la base o cualquiera de los workers). Usa `degraded` y
+no `not_ready` a proposito: la instancia sigue lista para el balanceo (eso
+lo dice `/ready`), pero opera degradada. Es informativo y **no afecta el
+balanceo de Kong**: sirve para diagnosticar que un worker dejo de consumir
+aunque la API siga respondiendo.
