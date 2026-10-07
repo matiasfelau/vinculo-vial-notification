@@ -48,7 +48,7 @@ func TestDeathCount_CuentaSoloLaColaDeTrabajoAunqueLaRetryTengaOtroContador(t *t
 	const queue = "notification.alert-created.q"
 	headers := amqp.Table{
 		"x-death": []interface{}{
-			amqp.Table{"queue": queue + ".retry", "reason": "expired", "count": int64(9)},
+			amqp.Table{"queue": "notification.alert-created.retry", "reason": "expired", "count": int64(9)},
 			amqp.Table{"queue": queue, "reason": "rejected", "count": int64(2)},
 		},
 	}
