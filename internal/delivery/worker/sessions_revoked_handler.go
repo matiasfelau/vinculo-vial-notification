@@ -16,11 +16,12 @@ import (
 type SessionsRevokedHandler struct {
 	revokeService *sessions.RevokeSessionsService
 	deadLetters   deadLetterPublisher
+	queue         string
 	maxRetries    int64
 }
 
-func NewSessionsRevokedHandler(revokeService *sessions.RevokeSessionsService, deadLetters deadLetterPublisher, maxRetries int64) *SessionsRevokedHandler {
-	return &SessionsRevokedHandler{revokeService: revokeService, deadLetters: deadLetters, maxRetries: maxRetries}
+func NewSessionsRevokedHandler(revokeService *sessions.RevokeSessionsService, deadLetters deadLetterPublisher, queue string, maxRetries int64) *SessionsRevokedHandler {
+	return &SessionsRevokedHandler{revokeService: revokeService, deadLetters: deadLetters, queue: queue, maxRetries: maxRetries}
 }
 
 var _ messageHandler = (*SessionsRevokedHandler)(nil)
@@ -60,7 +61,7 @@ func (h *SessionsRevokedHandler) Handle(ctx context.Context, body []byte, retrie
 // equivalente en AlertCreatedHandler.sendToDeadLetter.
 func (h *SessionsRevokedHandler) sendToDeadLetter(ctx context.Context, body []byte, cause error) Outcome {
 	log.Printf("descartando evento de revocacion de sesiones a la dlq: %v", cause)
-	if err := h.deadLetters.PublishToDLQ(ctx, body, cause.Error()); err != nil {
+	if err := h.deadLetters.PublishToDLQ(ctx, h.queue, body, cause.Error()); err != nil {
 		log.Printf("no se pudo publicar a la dlq, se reintenta: %v", err)
 		return OutcomeNackNoRequeue
 	}

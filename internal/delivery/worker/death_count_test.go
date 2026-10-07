@@ -43,3 +43,17 @@ func TestDeathCount_ToleraFormatoInesperado(t *testing.T) {
 		t.Fatalf("count = %d, se esperaba 0", count)
 	}
 }
+
+func TestDeathCount_CuentaSoloLaColaDeTrabajoAunqueLaRetryTengaOtroContador(t *testing.T) {
+	const queue = "notification.alert-created.q"
+	headers := amqp.Table{
+		"x-death": []interface{}{
+			amqp.Table{"queue": queue + ".retry", "reason": "expired", "count": int64(9)},
+			amqp.Table{"queue": queue, "reason": "rejected", "count": int64(2)},
+		},
+	}
+
+	if count := deathCount(headers, queue); count != 2 {
+		t.Fatalf("count = %d, se esperaba 2 (solo las entradas de la cola de trabajo)", count)
+	}
+}

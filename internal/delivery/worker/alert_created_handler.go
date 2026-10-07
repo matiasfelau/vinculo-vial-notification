@@ -12,7 +12,7 @@ import (
 // publica sobre el canal AMQP; en las pruebas se reemplaza por un
 // doble.
 type deadLetterPublisher interface {
-	PublishToDLQ(ctx context.Context, body []byte, reason string) error
+	PublishToDLQ(ctx context.Context, queue string, body []byte, reason string) error
 }
 
 // Outcome indica al consumer AMQP que accion tomar sobre el delivery
@@ -35,11 +35,12 @@ const (
 type AlertCreatedHandler struct {
 	dispatchService *dispatch.DispatchAlertService
 	deadLetters     deadLetterPublisher
+	queue           string
 	maxRetries      int64
 }
 
-func NewAlertCreatedHandler(dispatchService *dispatch.DispatchAlertService, deadLetters deadLetterPublisher, maxRetries int64) *AlertCreatedHandler {
-	return &AlertCreatedHandler{dispatchService: dispatchService, deadLetters: deadLetters, maxRetries: maxRetries}
+func NewAlertCreatedHandler(dispatchService *dispatch.DispatchAlertService, deadLetters deadLetterPublisher, queue string, maxRetries int64) *AlertCreatedHandler {
+	return &AlertCreatedHandler{dispatchService: dispatchService, deadLetters: deadLetters, queue: queue, maxRetries: maxRetries}
 }
 
 // Handle procesa un delivery. retries es la cantidad de veces que este
@@ -84,7 +85,7 @@ func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries i
 // silencio con un ACK que no garantiza nada.
 func (h *AlertCreatedHandler) sendToDeadLetter(ctx context.Context, body []byte, cause error) Outcome {
 	log.Printf("descartando mensaje a la dlq: %v", cause)
-	if err := h.deadLetters.PublishToDLQ(ctx, body, cause.Error()); err != nil {
+	if err := h.deadLetters.PublishToDLQ(ctx, h.queue, body, cause.Error()); err != nil {
 		log.Printf("no se pudo publicar a la dlq, se reintenta: %v", err)
 		return OutcomeNackNoRequeue
 	}
