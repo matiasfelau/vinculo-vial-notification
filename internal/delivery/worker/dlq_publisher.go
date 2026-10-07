@@ -20,6 +20,11 @@ const dlqExchange = "vvi.dlq.exchange"
 // original.
 var errDLQNotConfirmed = errors.New("la dlq no confirmo la publicacion")
 
+// errDLQQueueRequired se devuelve cuando no se informa la cola de
+// origen. La DLQ esta bindeada por el nombre de la cola de trabajo:
+// publicar con otra routing key (o vacia) dejaria el mensaje sin ruta.
+var errDLQQueueRequired = errors.New("la cola de origen es obligatoria para publicar en la dlq")
+
 // AMQPDeadLetterPublisher publica directamente al exchange de dead
 // letter, sorteando el ciclo de reintentos normal. No declara
 // exchanges, colas ni bindings: solo publica sobre topologia
@@ -34,8 +39,10 @@ func NewAMQPDeadLetterPublisher(channel publishChannel) *AMQPDeadLetterPublisher
 
 var _ deadLetterPublisher = (*AMQPDeadLetterPublisher)(nil)
 
-// PublishToDLQ publica el mensaje como persistente y con
-// mandatory=true, y espera la confirmacion del broker (publisher
+// PublishToDLQ publica el mensaje en vvi.dlq.exchange con routing key
+// igual al nombre de la cola de trabajo de la que proviene (queue),
+// que es por lo que esta bindeada su DLQ. Lo publica como persistente
+// y con mandatory=true, y espera la confirmacion del broker (publisher
 // confirm) antes de devolver exito. El canal debe estar en modo
 // confirm (ver dial en reconnect.go); de no estarlo, se trata como
 // fallo en lugar de arriesgar un ACK del mensaje original sin
@@ -48,8 +55,12 @@ var _ deadLetterPublisher = (*AMQPDeadLetterPublisher)(nil)
 // via NotifyReturn (ver logUnroutableReturns en reconnect.go), no
 // como un error de esta llamada: no hay nada que este publisher
 // pueda hacer distinto ante un problema de topologia que no declara.
-func (p *AMQPDeadLetterPublisher) PublishToDLQ(ctx context.Context, body []byte, reason string) error {
-	confirmation, err := p.channel.PublishWithDeferredConfirmWithContext(ctx, dlqExchange, "", true, false, amqp.Publishing{
+func (p *AMQPDeadLetterPublisher) PublishToDLQ(ctx context.Context, queue string, body []byte, reason string) error {
+	if queue == "" {
+		return errDLQQueueRequired
+	}
+
+	confirmation, err := p.channel.PublishWithDeferredConfirmWithContext(ctx, dlqExchange, queue, true, false, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Body:         body,

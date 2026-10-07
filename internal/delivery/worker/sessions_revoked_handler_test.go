@@ -42,7 +42,7 @@ func TestSessionsRevokedHandler_ProcesaUnEventoValido_BorraLosTokensYAck(t *test
 
 	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens))
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
 
 	outcome := handler.Handle(context.Background(), sessionsRevokedEnvelope(uuid.New().String(), owner.String()), 0)
 
@@ -61,7 +61,7 @@ func TestSessionsRevokedHandler_ProcesaUnEventoValido_BorraLosTokensYAck(t *test
 func TestSessionsRevokedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
 	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()))
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
 
 	outcome := handler.Handle(context.Background(), []byte(`{no es json`), 0)
 
@@ -71,12 +71,13 @@ func TestSessionsRevokedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
 	if len(deadLetters.published) != 1 {
 		t.Fatalf("se esperaba un mensaje publicado a la dlq, se publicaron %d", len(deadLetters.published))
 	}
+	assertDeadLetterQueue(t, deadLetters, testSessionsQueue)
 }
 
 func TestSessionsRevokedHandler_EnvelopeMalFormadoYFalloAlPublicarEnLaDLQ_NackSinRequeue(t *testing.T) {
 	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()))
 	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
-	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
 
 	outcome := handler.Handle(context.Background(), []byte(`{no es json`), 0)
 
@@ -88,7 +89,7 @@ func TestSessionsRevokedHandler_EnvelopeMalFormadoYFalloAlPublicarEnLaDLQ_NackSi
 func TestSessionsRevokedHandler_ActorInvalido_AckYDLQ(t *testing.T) {
 	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()))
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
 
 	body := sessionsRevokedEnvelope(uuid.New().String(), "no-es-un-uuid")
 	outcome := handler.Handle(context.Background(), body, 0)
@@ -99,6 +100,7 @@ func TestSessionsRevokedHandler_ActorInvalido_AckYDLQ(t *testing.T) {
 	if len(deadLetters.published) != 1 {
 		t.Fatalf("se esperaba un mensaje publicado a la dlq, se publicaron %d", len(deadLetters.published))
 	}
+	assertDeadLetterQueue(t, deadLetters, testSessionsQueue)
 }
 
 func TestSessionsRevokedHandler_RedeliveryDelMismoEvento_SoloUnaBaja(t *testing.T) {
@@ -107,7 +109,7 @@ func TestSessionsRevokedHandler_RedeliveryDelMismoEvento_SoloUnaBaja(t *testing.
 	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1", UpdatedAt: time.Now()})
 
 	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens))
-	handler := NewSessionsRevokedHandler(service, &fakeDeadLetterPublisher{}, 3)
+	handler := NewSessionsRevokedHandler(service, &fakeDeadLetterPublisher{}, testSessionsQueue, 3)
 
 	body := sessionsRevokedEnvelope(uuid.New().String(), owner.String())
 	first := handler.Handle(context.Background(), body, 0)
@@ -122,7 +124,7 @@ func TestSessionsRevokedHandler_FalloTransitorioBajoElLimite_NackSinRequeue(t *t
 	repo := &failingDeviceTokenRepository{err: errors.New("base caida")}
 	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), repo))
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
 
 	body := sessionsRevokedEnvelope(uuid.New().String(), uuid.New().String())
 	outcome := handler.Handle(context.Background(), body, 1)
@@ -139,7 +141,7 @@ func TestSessionsRevokedHandler_SuperaMaxRetries_AckYDLQ(t *testing.T) {
 	repo := &failingDeviceTokenRepository{err: errors.New("base caida")}
 	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), repo))
 	deadLetters := &fakeDeadLetterPublisher{}
-	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
 
 	body := sessionsRevokedEnvelope(uuid.New().String(), uuid.New().String())
 	outcome := handler.Handle(context.Background(), body, 3)
@@ -150,13 +152,14 @@ func TestSessionsRevokedHandler_SuperaMaxRetries_AckYDLQ(t *testing.T) {
 	if len(deadLetters.published) != 1 {
 		t.Fatalf("se esperaba un mensaje publicado a la dlq, se publicaron %d", len(deadLetters.published))
 	}
+	assertDeadLetterQueue(t, deadLetters, testSessionsQueue)
 }
 
 func TestSessionsRevokedHandler_SuperaMaxRetriesYFalloAlPublicarEnLaDLQ_NackSinRequeue(t *testing.T) {
 	repo := &failingDeviceTokenRepository{err: errors.New("base caida")}
 	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), repo))
 	deadLetters := &fakeDeadLetterPublisher{err: errors.New("dlq no confirmo la publicacion")}
-	handler := NewSessionsRevokedHandler(service, deadLetters, 3)
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
 
 	body := sessionsRevokedEnvelope(uuid.New().String(), uuid.New().String())
 	outcome := handler.Handle(context.Background(), body, 3)
