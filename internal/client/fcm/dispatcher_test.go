@@ -2,9 +2,7 @@ package fcm
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +32,12 @@ func (f *fakeMulticastSender) SendEachForMulticast(_ context.Context, message *m
 	return f.responses[index], nil
 }
 
+var testMessage = domain.PushMessage{
+	Title: "titulo",
+	Body:  "cuerpo",
+	Data:  map[string]string{"alert_type": "choque"},
+}
+
 func successResponses(n int) *messaging.BatchResponse {
 	responses := make([]*messaging.SendResponse, n)
 	for i := range responses {
@@ -57,7 +61,7 @@ func TestDispatcher_ParticionaEnLotesDe500(t *testing.T) {
 	}
 	dispatcher := &Dispatcher{client: sender, batchSize: 500}
 
-	outcomes, err := dispatcher.Dispatch(context.Background(), tokens, "choque")
+	outcomes, err := dispatcher.Dispatch(context.Background(), tokens, testMessage)
 	if err != nil {
 		t.Fatalf("Dispatch() devolvio un error inesperado: %v", err)
 	}
@@ -91,7 +95,7 @@ func TestDispatcher_ClasificaLosTokensInvalidosSegunElClasificador(t *testing.T)
 	}
 	dispatcher := &Dispatcher{client: sender, batchSize: 500}
 
-	outcomes, err := dispatcher.Dispatch(context.Background(), []string{"a", "b", "c"}, "choque")
+	outcomes, err := dispatcher.Dispatch(context.Background(), []string{"a", "b", "c"}, testMessage)
 	if err != nil {
 		t.Fatalf("Dispatch() devolvio un error inesperado: %v", err)
 	}
@@ -120,7 +124,7 @@ func TestDispatcher_PropagaElErrorDelSDKConservandoLosLotesPrevios(t *testing.T)
 	}
 	dispatcher := &Dispatcher{client: sender, batchSize: 500}
 
-	outcomes, err := dispatcher.Dispatch(context.Background(), tokens, "choque")
+	outcomes, err := dispatcher.Dispatch(context.Background(), tokens, testMessage)
 	if err == nil {
 		t.Fatal("se esperaba un error del segundo lote")
 	}
@@ -129,27 +133,25 @@ func TestDispatcher_PropagaElErrorDelSDKConservandoLosLotesPrevios(t *testing.T)
 	}
 }
 
-func TestBuildMulticastMessage_NoContieneActorNiIdentificadoresDeEmisor(t *testing.T) {
-	message := buildMulticastMessage([]string{"token-del-dispositivo"}, "choque")
+func TestBuildMulticastMessage_TraduceElMensajeDeDominioSinAgregarNada(t *testing.T) {
+	message := buildMulticastMessage([]string{"token-del-dispositivo"}, testMessage)
 
-	encoded, err := json.Marshal(message)
-	if err != nil {
-		t.Fatalf("no se pudo serializar el mensaje: %v", err)
+	if len(message.Tokens) != 1 || message.Tokens[0] != "token-del-dispositivo" {
+		t.Errorf("Tokens = %v, se esperaba [token-del-dispositivo]", message.Tokens)
 	}
+	if message.Notification.Title != "titulo" || message.Notification.Body != "cuerpo" {
+		t.Errorf("Notification = %+v, se esperaba titulo/cuerpo", message.Notification)
+	}
+	if len(message.Data) != 1 || message.Data["alert_type"] != "choque" {
+		t.Errorf("Data = %v, se esperaba unicamente alert_type=choque", message.Data)
+	}
+}
 
-	lower := strings.ToLower(string(encoded))
-	forbidden := []string{"actor", "issuer", "emisor", "owner_id", "patente", "dni", "license_plate"}
-	for _, term := range forbidden {
-		if strings.Contains(lower, term) {
-			t.Errorf("el mensaje serializado contiene el termino prohibido %q: %s", term, encoded)
-		}
-	}
+func TestBuildMulticastMessage_SinDataNoEnviaData(t *testing.T) {
+	message := buildMulticastMessage([]string{"token"}, domain.PushMessage{Title: "t", Body: "b"})
 
-	if message.Data["alert_type"] != "choque" {
-		t.Errorf("Data[alert_type] = %q, se esperaba %q", message.Data["alert_type"], "choque")
-	}
-	if len(message.Data) != 1 {
-		t.Errorf("Data deberia contener unicamente alert_type, se obtuvo: %v", message.Data)
+	if len(message.Data) != 0 {
+		t.Errorf("Data = %v, se esperaba vacio cuando el mensaje no trae data", message.Data)
 	}
 }
 
@@ -168,7 +170,7 @@ func TestDispatcher_AplicaUnTimeoutPropioPorLote(t *testing.T) {
 	dispatcher := &Dispatcher{client: &blockingMulticastSender{}, batchSize: 500, timeout: 20 * time.Millisecond}
 
 	start := time.Now()
-	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque")
+	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, testMessage)
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -186,7 +188,7 @@ func TestDispatcher_SinTimeoutConfiguradoUsaElContextoDelLlamador(t *testing.T) 
 	sender := &fakeMulticastSender{responses: []*messaging.BatchResponse{successResponses(1)}}
 	dispatcher := &Dispatcher{client: sender, batchSize: 500, timeout: 0}
 
-	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque")
+	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, testMessage)
 	if err != nil {
 		t.Fatalf("Dispatch() devolvio un error inesperado: %v", err)
 	}
@@ -199,7 +201,7 @@ func TestDispatcher_ConElCircuitoAbierto_NoLlamaAlSDK(t *testing.T) {
 	sender := &fakeMulticastSender{}
 	dispatcher := &Dispatcher{client: sender, batchSize: 500, breaker: cb}
 
-	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque")
+	_, err := dispatcher.Dispatch(context.Background(), []string{"token"}, testMessage)
 
 	if !errors.Is(err, breaker.ErrOpen) {
 		t.Fatalf("error = %v, se esperaba breaker.ErrOpen", err)
@@ -217,7 +219,7 @@ func TestDispatcher_FalloDeTransporteDelSDK_CuentaComoFallaParaElBreaker(t *test
 	}
 	dispatcher := &Dispatcher{client: sender, batchSize: 500, breaker: cb}
 
-	if _, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque"); err == nil {
+	if _, err := dispatcher.Dispatch(context.Background(), []string{"token"}, testMessage); err == nil {
 		t.Fatal("se esperaba que se propagara el error del SDK")
 	}
 
@@ -241,7 +243,7 @@ func TestDispatcher_RechazoPorTokenInvalido_NoCuentaComoFallaParaElBreaker(t *te
 
 	// El SDK respondio con exito a nivel de transporte: el rechazo es
 	// por token, no por disponibilidad del proveedor.
-	if _, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque"); err != nil {
+	if _, err := dispatcher.Dispatch(context.Background(), []string{"token"}, testMessage); err != nil {
 		t.Fatalf("Dispatch() devolvio un error inesperado: %v", err)
 	}
 
@@ -254,7 +256,7 @@ func TestDispatcher_SinBreakerConfigurado_SiempreIntentaLaLlamada(t *testing.T) 
 	sender := &fakeMulticastSender{responses: []*messaging.BatchResponse{successResponses(1)}}
 	dispatcher := &Dispatcher{client: sender, batchSize: 500, breaker: nil}
 
-	if _, err := dispatcher.Dispatch(context.Background(), []string{"token"}, "choque"); err != nil {
+	if _, err := dispatcher.Dispatch(context.Background(), []string{"token"}, testMessage); err != nil {
 		t.Fatalf("Dispatch() devolvio un error inesperado: %v", err)
 	}
 	if len(sender.calls) != 1 {

@@ -25,16 +25,19 @@ import (
 type fakeDispatcher struct {
 	mu            sync.Mutex
 	calls         [][]string
+	messages      []domain.PushMessage
 	err           error
-	failFirst     int // con err != nil: 0 = falla siempre; N = falla solo las primeras N llamadas
+	failFirst     int          // con err != nil: 0 = falla siempre; N = falla solo las primeras N llamadas
+	failCalls     map[int]bool // numeros de llamada (desde 1) que fallan, independientemente de err
 	invalidTokens map[string]bool
 	started       chan struct{}
 	release       chan struct{}
 }
 
-func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, _ string) ([]domain.DispatchOutcome, error) {
+func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, message domain.PushMessage) ([]domain.DispatchOutcome, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, tokens)
+	f.messages = append(f.messages, message)
 	attempt := len(f.calls)
 	f.mu.Unlock()
 
@@ -45,6 +48,9 @@ func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, _ string) 
 		<-f.release
 	}
 
+	if f.failCalls[attempt] {
+		return nil, errors.New("fcm no disponible")
+	}
 	if f.err != nil && (f.failFirst == 0 || attempt <= f.failFirst) {
 		return nil, f.err
 	}

@@ -22,6 +22,9 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	t.Setenv("RABBITMQ_EXCHANGE", "")
 	t.Setenv("ALERT_QUEUE", "")
 	t.Setenv("SESSIONS_REVOKED_QUEUE", "")
+	t.Setenv("ALERT_REJECTED_QUEUE", "")
+	t.Setenv("ALERT_EXPIRED_QUEUE", "")
+	t.Setenv("ALERT_SEEN_QUEUE", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -82,6 +85,15 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	if cfg.AlertQueue != "notification.alert-created.q" {
 		t.Errorf("AlertQueue = %q, se esperaba %q", cfg.AlertQueue, "notification.alert-created.q")
 	}
+	if cfg.AlertRejectedQueue != "notification.alert-rejected.q" {
+		t.Errorf("AlertRejectedQueue = %q, se esperaba %q", cfg.AlertRejectedQueue, "notification.alert-rejected.q")
+	}
+	if cfg.AlertExpiredQueue != "notification.alert-expired.q" {
+		t.Errorf("AlertExpiredQueue = %q, se esperaba %q", cfg.AlertExpiredQueue, "notification.alert-expired.q")
+	}
+	if cfg.AlertSeenQueue != "notification.alert-seen.q" {
+		t.Errorf("AlertSeenQueue = %q, se esperaba %q", cfg.AlertSeenQueue, "notification.alert-seen.q")
+	}
 }
 
 func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
@@ -102,10 +114,17 @@ func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
 	t.Setenv("HTTP_READ_TIMEOUT_SECONDS", "3")
 	t.Setenv("HTTP_WRITE_TIMEOUT_SECONDS", "7")
 	t.Setenv("HTTP_IDLE_TIMEOUT_SECONDS", "45")
+	t.Setenv("ALERT_REJECTED_QUEUE", "otra.rejected.q")
+	t.Setenv("ALERT_EXPIRED_QUEUE", "otra.expired.q")
+	t.Setenv("ALERT_SEEN_QUEUE", "otra.seen.q")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() devolvio un error inesperado: %v", err)
+	}
+
+	if cfg.AlertRejectedQueue != "otra.rejected.q" || cfg.AlertExpiredQueue != "otra.expired.q" || cfg.AlertSeenQueue != "otra.seen.q" {
+		t.Errorf("las colas de avisos al emisor no respetan las variables explicitas: %q %q %q", cfg.AlertRejectedQueue, cfg.AlertExpiredQueue, cfg.AlertSeenQueue)
 	}
 
 	if cfg.Port != "9090" {

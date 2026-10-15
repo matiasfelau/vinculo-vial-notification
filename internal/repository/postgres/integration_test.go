@@ -74,7 +74,7 @@ type gatedDispatcher struct {
 	release   chan struct{}
 }
 
-func (g *gatedDispatcher) Dispatch(_ context.Context, tokens []string, _ string) ([]domain.DispatchOutcome, error) {
+func (g *gatedDispatcher) Dispatch(_ context.Context, tokens []string, _ domain.PushMessage) ([]domain.DispatchOutcome, error) {
 	g.mu.Lock()
 	g.calls++
 	attempt := g.calls

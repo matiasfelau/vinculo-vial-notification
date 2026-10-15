@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 
+	"github.com/google/uuid"
+
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/dispatch"
 )
 
@@ -62,6 +64,8 @@ func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries i
 		EventID:   envelope.EventID,
 		OwnerIDs:  payload.OwnerIDs,
 		AlertType: payload.AlertType,
+		AlertID:   payload.AlertID,
+		IssuerID:  issuerFromActor(envelope),
 	}
 
 	if err := h.dispatchService.Execute(ctx, event); err != nil {
@@ -75,6 +79,20 @@ func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries i
 	}
 
 	return OutcomeAck
+}
+
+// issuerFromActor devuelve el emisor de la alerta (el actor del
+// envelope), o uuid.Nil si el actor no es un UUID valido. Un actor
+// invalido no invalida el evento: el aviso a los duenos no depende de el,
+// asi que solo se omite el aviso al emisor. El log lleva el eventId y no
+// el valor del actor.
+func issuerFromActor(envelope EventEnvelope) uuid.UUID {
+	issuerID, err := uuid.Parse(envelope.Actor)
+	if err != nil {
+		log.Printf("el evento %s no trae un actor valido, se omite el aviso al emisor", envelope.EventID)
+		return uuid.Nil
+	}
+	return issuerID
 }
 
 // sendToDeadLetter publica el mensaje a la DLQ y solo ACKea el

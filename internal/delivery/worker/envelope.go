@@ -9,8 +9,10 @@ import (
 )
 
 // EventEnvelope es el sobre estandar que publican los productores de
-// eventos de la plataforma. El actor es metadato de auditoria: los
-// handlers de este servicio no deben propagarlo al destinatario.
+// eventos de la plataforma. El actor identifica al usuario al que se
+// avisa (el emisor en alert.*, el usuario en user.sessions.revoked): se
+// usa solo para resolver sus device tokens. Nunca se propaga al
+// contenido de una push, ni a un log junto al payload.
 type EventEnvelope struct {
 	EventID   uuid.UUID       `json:"eventId"`
 	EventType string          `json:"eventType"`

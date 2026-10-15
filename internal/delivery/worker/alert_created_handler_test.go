@@ -14,10 +14,14 @@ import (
 )
 
 type fakeDispatcher struct {
-	err error
+	err      error
+	messages []domain.PushMessage
+	tokens   [][]string
 }
 
-func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, _ string) ([]domain.DispatchOutcome, error) {
+func (f *fakeDispatcher) Dispatch(_ context.Context, tokens []string, message domain.PushMessage) ([]domain.DispatchOutcome, error) {
+	f.messages = append(f.messages, message)
+	f.tokens = append(f.tokens, tokens)
 	if f.err != nil {
 		return nil, f.err
 	}
