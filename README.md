@@ -9,7 +9,12 @@ despachar notificaciones push a traves de Firebase Cloud Messaging.
 
 - Alta y baja de tokens FCM por usuario (`/api/v1/notifications/tokens`).
 - Consumo del evento `alert.created` y despacho de la push correspondiente
-  a los destinatarios de una alerta.
+  a los destinatarios de una alerta (con `alert_id` en `data` para el deep
+  link, si el evento lo trae) y, ademas, un aviso al emisor.
+- Consumo de `alert.rejected`, `alert.expired` y `alert.seen` y aviso push
+  al emisor de la alerta, que viaja en el `actor` del envelope. Los textos
+  son genericos: nunca incluyen el motivo de un rechazo. Si el emisor no
+  tiene tokens, el mensaje se confirma sin error.
 - Consumo del evento `user.sessions.revoked` y limpieza de tokens ante la
   revocacion de sesiones de un usuario.
 - Deduplicacion de eventos por `eventId` para garantizar entrega efectiva
@@ -52,6 +57,37 @@ CGO_ENABLED=0 go build -o notification ./cmd/api
 docker compose up --build
 ```
 
+## Avisos al emisor (US-09)
+
+Los cuatro avisos usan el titulo `ViVIAna` y `data`
+`{ "type": "SENT_UPDATED", "alert_id": "<uuid>" }`, con la que la app abre
+el chat del emisor:
+
+| Evento | Cola (variable) | Cuerpo |
+|---|---|---|
+| `alert.created` | `ALERT_QUEUE` | Tu alerta fue validada. Le avisé al dueño. |
+| `alert.seen` | `ALERT_SEEN_QUEUE` | El dueño leyó tu mensaje. |
+| `alert.rejected` | `ALERT_REJECTED_QUEUE` | No pudimos validar tu alerta. |
+| `alert.expired` | `ALERT_EXPIRED_QUEUE` | Tu alerta no tuvo respuesta. |
+
+Variables nuevas (ver `.env.example`): `ALERT_REJECTED_QUEUE`
+(`notification.alert-rejected.q`), `ALERT_EXPIRED_QUEUE`
+(`notification.alert-expired.q`) y `ALERT_SEEN_QUEUE`
+(`notification.alert-seen.q`). Las colas, con su `.retry` y su `.dlq`, las
+declara `vinculo-vial-core`: deben existir antes de arrancar el servicio.
+Reintentos y DLQ funcionan igual que en los consumidores existentes
+(`MAX_RETRIES`, DLQ ruteada por el nombre de la cola de trabajo).
+
+Con `alert.created`, el aviso a los dueños y el aviso al emisor son dos
+envios independientes, cada uno con su propia idempotencia: si falla uno y
+el mensaje se reintenta, el otro no se repite. Un `alert.created` sin
+`alert_id` (alertas anteriores a US-09) se procesa igual, pero sin
+`alert_id` en `data`.
+
+Privacidad: el `actor` solo se usa para buscar los tokens del emisor. No se
+guarda en `notification_log`, no viaja en el contenido de la push y no se
+loguea junto al payload.
+
 ## Pruebas de integracion
 
 `go test ./...` corre solo pruebas unitarias (SQLite y dobles en memoria).
@@ -82,8 +118,9 @@ registrar y dar de baja tokens FCM opera exclusivamente sobre la base, y un
 broker caido no debe dejar a la instancia sin servir esas rutas.
 
 `GET /health/deps` expone el estado de todas las dependencias: la base y
-las dos conexiones a RabbitMQ (`rabbitmq_alert_created` y
-`rabbitmq_sessions_revoked`, una por cada worker). Mismo formato de
+las conexiones a RabbitMQ (`rabbitmq_alert_created`,
+`rabbitmq_sessions_revoked`, `rabbitmq_alert_rejected`,
+`rabbitmq_alert_expired` y `rabbitmq_alert_seen`, una por cada worker). Mismo formato de
 respuesta que `/ready`: `200 OK` con `"status":"ready"` si todas estan
 arriba, o `503` con `"status":"degraded"` y el detalle por dependencia si
 alguna esta caida (la base o cualquiera de los workers). Usa `degraded` y

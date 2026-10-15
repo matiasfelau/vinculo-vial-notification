@@ -17,6 +17,9 @@ type Config struct {
 	RabbitMQExchange        string
 	AlertQueue              string
 	SessionsRevokedQueue    string
+	AlertRejectedQueue      string
+	AlertExpiredQueue       string
+	AlertSeenQueue          string
 	MaxRetries              int
 	FirebaseCredentialsPath string
 	FCMBatchSize            int
@@ -124,6 +127,9 @@ func Load() (*Config, error) {
 		RabbitMQExchange:        getEnv("RABBITMQ_EXCHANGE", "vvi.topic.exchange"),
 		AlertQueue:              getEnv("ALERT_QUEUE", "notification.alert-created.q"),
 		SessionsRevokedQueue:    getEnv("SESSIONS_REVOKED_QUEUE", "notification.sessions-revoked.q"),
+		AlertRejectedQueue:      getEnv("ALERT_REJECTED_QUEUE", "notification.alert-rejected.q"),
+		AlertExpiredQueue:       getEnv("ALERT_EXPIRED_QUEUE", "notification.alert-expired.q"),
+		AlertSeenQueue:          getEnv("ALERT_SEEN_QUEUE", "notification.alert-seen.q"),
 		MaxRetries:              maxRetries,
 		FirebaseCredentialsPath: os.Getenv("FIREBASE_CREDENTIALS_PATH"),
 		FCMBatchSize:            fcmBatchSize,

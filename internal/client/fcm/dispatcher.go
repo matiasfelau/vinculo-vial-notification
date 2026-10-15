@@ -10,11 +10,6 @@ import (
 	"github.com/matiasfelau/vinculo-vial-notification/pkg/breaker"
 )
 
-const (
-	notificationTitle = "Alerta de Vinculo Vial"
-	notificationBody  = "Tenes una nueva alerta. Abri la app para ver el detalle."
-)
-
 // multicastSender es el subconjunto del cliente de Firebase Admin SDK
 // que este paquete consume. Aislarlo permite reemplazarlo por un doble
 // de prueba sin credenciales reales.
@@ -55,13 +50,11 @@ func NewDispatcher(client *messaging.Client, batchSize int, timeout time.Duratio
 
 var _ domain.Dispatcher = (*Dispatcher)(nil)
 
-func (d *Dispatcher) Dispatch(ctx context.Context, tokens []string, alertType string) ([]domain.DispatchOutcome, error) {
+func (d *Dispatcher) Dispatch(ctx context.Context, tokens []string, message domain.PushMessage) ([]domain.DispatchOutcome, error) {
 	outcomes := make([]domain.DispatchOutcome, 0, len(tokens))
 
 	for _, batch := range partition(tokens, d.batchSize) {
-		message := buildMulticastMessage(batch, alertType)
-
-		response, err := d.sendBatch(ctx, message)
+		response, err := d.sendBatch(ctx, buildMulticastMessage(batch, message))
 		if err != nil {
 			return outcomes, err
 		}
@@ -117,18 +110,16 @@ func (d *Dispatcher) sendWithTimeout(ctx context.Context, message *messaging.Mul
 	return d.client.SendEachForMulticast(batchCtx, message)
 }
 
-// buildMulticastMessage arma el payload sin PII: solo alert_type como
-// dato de enrutamiento y un texto generico. El actor del evento nunca
-// llega hasta aca.
-func buildMulticastMessage(batch []string, alertType string) *messaging.MulticastMessage {
+// buildMulticastMessage traduce el mensaje de dominio al formato del
+// SDK. El contenido (texto y data) lo decide el servicio de despacho;
+// este adaptador no agrega ni infiere nada.
+func buildMulticastMessage(batch []string, message domain.PushMessage) *messaging.MulticastMessage {
 	return &messaging.MulticastMessage{
 		Tokens: batch,
-		Data: map[string]string{
-			"alert_type": alertType,
-		},
+		Data:   message.Data,
 		Notification: &messaging.Notification{
-			Title: notificationTitle,
-			Body:  notificationBody,
+			Title: message.Title,
+			Body:  message.Body,
 		},
 	}
 }
