@@ -49,7 +49,7 @@ func TestDispatchAlertService_AvisaALosDuenosYAlEmisor(t *testing.T) {
 		t.Errorf("el segundo despacho fue a %v, se esperaba solo token-emisor", dispatcher.calls[1])
 	}
 	issuerMsg := dispatcher.messages[1]
-	if issuerMsg.Title != "ViVIAna" || issuerMsg.Body != "Tu alerta fue validada. Le avisé al dueño." {
+	if issuerMsg.Title != "ViVIAna" || issuerMsg.Body != "Tu alerta fue validada." {
 		t.Errorf("texto del aviso al emisor = %+v", issuerMsg)
 	}
 	if issuerMsg.Data["type"] != "SENT_UPDATED" || issuerMsg.Data["alert_id"] != alertID.String() || len(issuerMsg.Data) != 2 {
@@ -205,5 +205,28 @@ func TestDispatchAlertService_RedeliveryConEmisor_NoDuplicaNingunAviso(t *testin
 
 	if dispatcher.callCount() != 2 {
 		t.Fatalf("se esperaban 2 despachos en total (uno por destinatario), se hicieron %d", dispatcher.callCount())
+	}
+}
+
+func TestDispatchAlertService_SinDuenos_AvisaSoloAlEmisor(t *testing.T) {
+	service, deviceTokens, notificationLogs, dispatcher := setup()
+	issuer, alertID := uuid.New(), uuid.New()
+	addToken(t, deviceTokens, issuer, "token-emisor")
+	addToken(t, deviceTokens, uuid.New(), "token-ajeno")
+
+	eventID := uuid.New()
+	event := AlertCreatedEvent{EventID: eventID, AlertType: "CRASHED", AlertID: alertID, IssuerID: issuer}
+	if err := service.Execute(context.Background(), event); err != nil {
+		t.Fatalf("Execute() devolvio un error inesperado: %v", err)
+	}
+
+	if len(dispatcher.calls) != 1 || len(dispatcher.calls[0]) != 1 || dispatcher.calls[0][0] != "token-emisor" {
+		t.Fatalf("se esperaba un unico despacho a token-emisor, se obtuvo %v", dispatcher.calls)
+	}
+	if body := dispatcher.messages[0].Body; body != "Tu alerta fue validada." {
+		t.Errorf("Body = %q", body)
+	}
+	if _, found := notificationLogs.Get(eventID); found {
+		t.Errorf("sin duenos no deberia registrarse el envio a duenos bajo el event_id")
 	}
 }

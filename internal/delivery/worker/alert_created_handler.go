@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"github.com/google/uuid"
@@ -60,12 +61,17 @@ func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries i
 		return h.sendToDeadLetter(ctx, body, err)
 	}
 
+	issuerID := issuerFromActor(envelope)
+	if len(payload.OwnerIDs) == 0 && issuerID == uuid.Nil {
+		return h.sendToDeadLetter(ctx, body, errors.New("evento sin owner_ids y sin actor valido: no hay a quien avisar"))
+	}
+
 	event := dispatch.AlertCreatedEvent{
 		EventID:   envelope.EventID,
 		OwnerIDs:  payload.OwnerIDs,
 		AlertType: payload.AlertType,
 		AlertID:   payload.AlertID,
-		IssuerID:  issuerFromActor(envelope),
+		IssuerID:  issuerID,
 	}
 
 	if err := h.dispatchService.Execute(ctx, event); err != nil {

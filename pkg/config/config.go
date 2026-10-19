@@ -20,6 +20,7 @@ type Config struct {
 	AlertRejectedQueue      string
 	AlertExpiredQueue       string
 	AlertSeenQueue          string
+	PendingDeliveredQueue   string
 	MaxRetries              int
 	FirebaseCredentialsPath string
 	FCMBatchSize            int
@@ -130,6 +131,7 @@ func Load() (*Config, error) {
 		AlertRejectedQueue:      getEnv("ALERT_REJECTED_QUEUE", "notification.alert-rejected.q"),
 		AlertExpiredQueue:       getEnv("ALERT_EXPIRED_QUEUE", "notification.alert-expired.q"),
 		AlertSeenQueue:          getEnv("ALERT_SEEN_QUEUE", "notification.alert-seen.q"),
+		PendingDeliveredQueue:   getEnv("ALERT_PENDING_DELIVERED_QUEUE", "notification.alert-pending-delivered.q"),
 		MaxRetries:              maxRetries,
 		FirebaseCredentialsPath: os.Getenv("FIREBASE_CREDENTIALS_PATH"),
 		FCMBatchSize:            fcmBatchSize,

@@ -74,14 +74,16 @@ func main() {
 	rejectedBrokerStatus := &deliveryworker.ConnectionStatus{}
 	expiredBrokerStatus := &deliveryworker.ConnectionStatus{}
 	seenBrokerStatus := &deliveryworker.ConnectionStatus{}
+	pendingDeliveredBrokerStatus := &deliveryworker.ConnectionStatus{}
 
 	readinessHandler := deliveryhttp.NewReadinessHandler(sqlDB)
 	depsHealthHandler := deliveryhttp.NewDepsHealthHandler(sqlDB, map[string]deliveryhttp.ConnectionChecker{
-		"rabbitmq_alert_created":    alertBrokerStatus,
-		"rabbitmq_sessions_revoked": sessionsBrokerStatus,
-		"rabbitmq_alert_rejected":   rejectedBrokerStatus,
-		"rabbitmq_alert_expired":    expiredBrokerStatus,
-		"rabbitmq_alert_seen":       seenBrokerStatus,
+		"rabbitmq_alert_created":           alertBrokerStatus,
+		"rabbitmq_sessions_revoked":        sessionsBrokerStatus,
+		"rabbitmq_alert_rejected":          rejectedBrokerStatus,
+		"rabbitmq_alert_expired":           expiredBrokerStatus,
+		"rabbitmq_alert_seen":              seenBrokerStatus,
+		"rabbitmq_alert_pending_delivered": pendingDeliveredBrokerStatus,
 	})
 
 	router := deliveryhttp.NewRouter()
@@ -113,10 +115,11 @@ func main() {
 
 	dispatchAlertService := dispatch.NewDispatchAlertService(unitOfWork, deviceTokenRepository, fcmDispatcher)
 	notifyIssuerService := dispatch.NewNotifyIssuerService(unitOfWork, deviceTokenRepository, fcmDispatcher)
+	notifyInboxService := dispatch.NewNotifyInboxService(unitOfWork, deviceTokenRepository, fcmDispatcher)
 	revokeSessionsService := sessions.NewRevokeSessionsService(unitOfWork)
 
 	var workers sync.WaitGroup
-	workers.Add(5)
+	workers.Add(6)
 
 	go runWorker(&workers, "alert.created", func() {
 		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, cfg.RabbitMQPrefetch, alertBrokerStatus, func(channel deliveryworker.AMQPChannel) *deliveryworker.Consumer {
@@ -131,6 +134,14 @@ func main() {
 			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
 			handler := deliveryworker.NewSessionsRevokedHandler(revokeSessionsService, deadLetters, cfg.SessionsRevokedQueue, int64(cfg.MaxRetries))
 			return deliveryworker.NewConsumer(channel, cfg.SessionsRevokedQueue, handler)
+		})
+	})
+
+	go runWorker(&workers, "alert.pending.delivered", func() {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.PendingDeliveredQueue, cfg.RabbitMQPrefetch, pendingDeliveredBrokerStatus, func(channel deliveryworker.AMQPChannel) *deliveryworker.Consumer {
+			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
+			handler := deliveryworker.NewPendingDeliveredHandler(notifyInboxService, deadLetters, cfg.PendingDeliveredQueue, int64(cfg.MaxRetries))
+			return deliveryworker.NewConsumer(channel, cfg.PendingDeliveredQueue, handler)
 		})
 	})
 

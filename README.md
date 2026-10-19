@@ -15,6 +15,8 @@ despachar notificaciones push a traves de Firebase Cloud Messaging.
   al emisor de la alerta, que viaja en el `actor` del envelope. Los textos
   son genericos: nunca incluyen el motivo de un rechazo. Si el emisor no
   tiene tokens, el mensaje se confirma sin error.
+- Consumo de `alert.pending.delivered` y un unico push a cada dueno de
+  `owner_ids` ("Tenés alertas sin leer en el buzón."). Nunca al emisor.
 - Consumo del evento `user.sessions.revoked` y limpieza de tokens ante la
   revocacion de sesiones de un usuario.
 - Deduplicacion de eventos por `eventId` para garantizar entrega efectiva
@@ -65,7 +67,7 @@ el chat del emisor:
 
 | Evento | Cola (variable) | Cuerpo |
 |---|---|---|
-| `alert.created` | `ALERT_QUEUE` | Tu alerta fue validada. Le avisé al dueño. |
+| `alert.created` | `ALERT_QUEUE` | Tu alerta fue validada. |
 | `alert.seen` | `ALERT_SEEN_QUEUE` | El dueño leyó tu mensaje. |
 | `alert.rejected` | `ALERT_REJECTED_QUEUE` | No pudimos validar tu alerta. |
 | `alert.expired` | `ALERT_EXPIRED_QUEUE` | Tu alerta no tuvo respuesta. |
@@ -84,9 +86,31 @@ el mensaje se reintenta, el otro no se repite. Un `alert.created` sin
 `alert_id` (alertas anteriores a US-09) se procesa igual, pero sin
 `alert_id` en `data`.
 
+Un `alert.created` con `owner_ids: []` es valido (la alerta se valido antes
+de que la patente tenga duenos): se avisa solo al emisor y no va a la DLQ.
+Sin `owner_ids` y sin `actor` valido no hay a quien avisar, y el mensaje
+se descarta a la DLQ como invalido.
+
 Privacidad: el `actor` solo se usa para buscar los tokens del emisor. No se
 guarda en `notification_log`, no viaja en el contenido de la push y no se
 loguea junto al payload.
+
+## Alertas pendientes entregadas (US-10)
+
+Cuando un usuario vincula un vehiculo cuya patente tenia alertas pendientes,
+Alert publica `alert.pending.delivered` con `{ owner_ids, count }` y sin
+`actor`. Este servicio lo consume desde `ALERT_PENDING_DELIVERED_QUEUE`
+(`notification.alert-pending-delivered.q`, con su `.retry` y su `.dlq`
+declaradas por `vinculo-vial-core`) y manda un unico push a cada dueno:
+
+| Titulo | Cuerpo | `data` |
+|---|---|---|
+| Alerta de Vinculo Vial | Tenés alertas sin leer en el buzón. | `{ "type": "INBOX_UPDATED" }` |
+
+`count` se ignora: el aviso es generico. Si ningun dueno tiene tokens, el
+mensaje se confirma sin error. Un `owner_ids` ausente o vacio, o con un valor
+que no es UUID, es un mensaje invalido y va directo a la DLQ. Reintentos,
+`MAX_RETRIES` y DLQ funcionan igual que en los demas consumidores.
 
 ## Pruebas de integracion
 
@@ -120,7 +144,8 @@ broker caido no debe dejar a la instancia sin servir esas rutas.
 `GET /health/deps` expone el estado de todas las dependencias: la base y
 las conexiones a RabbitMQ (`rabbitmq_alert_created`,
 `rabbitmq_sessions_revoked`, `rabbitmq_alert_rejected`,
-`rabbitmq_alert_expired` y `rabbitmq_alert_seen`, una por cada worker). Mismo formato de
+`rabbitmq_alert_expired`, `rabbitmq_alert_seen` y
+`rabbitmq_alert_pending_delivered`, una por cada worker). Mismo formato de
 respuesta que `/ready`: `200 OK` con `"status":"ready"` si todas estan
 arriba, o `503` con `"status":"degraded"` y el detalle por dependencia si
 alguna esta caida (la base o cualquiera de los workers). Usa `degraded` y
