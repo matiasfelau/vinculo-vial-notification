@@ -12,7 +12,8 @@ import (
 // AlertCreatedEvent es la porcion del Event Envelope de alert.created
 // que este servicio necesita, ya extraida y validada por el consumer.
 //
-// AlertID e IssuerID son opcionales. AlertID viaja en el payload desde
+// OwnerIDs puede estar vacio si IssuerID no lo esta. AlertID e IssuerID
+// son opcionales. AlertID viaja en el payload desde
 // US-09; las alertas anteriores no lo traen (uuid.Nil). IssuerID es el
 // actor del envelope: su unico uso permitido es resolver los tokens del
 // aviso al emisor. Nunca se incluye en el contenido de una push ni en
@@ -26,7 +27,7 @@ type AlertCreatedEvent struct {
 }
 
 // DispatchAlertService procesa un evento alert.created: avisa a los
-// duenos (push generica) y, ademas, al emisor de la alerta.
+// duenos (push generica, si hay) y, ademas, al emisor de la alerta.
 //
 // Son dos envios independientes, cada uno con su propia clave de
 // idempotencia: el event_id para los duenos y una derivada de el para el
@@ -62,7 +63,12 @@ func issuerDedupeID(eventID uuid.UUID) uuid.UUID {
 // se intentan aunque uno falle; si alguno falla, el error vuelve al
 // consumer para que reintente el mensaje completo.
 func (s *DispatchAlertService) Execute(ctx context.Context, event AlertCreatedEvent) error {
-	ownersErr := s.deliver(ctx, event.EventID, event.OwnerIDs, ownerMessage(event.AlertType, event.AlertID))
+	// Una alerta puede validarse antes de tener destinatarios (la patente
+	// todavia no tiene duenos): en ese caso solo se avisa al emisor.
+	var ownersErr error
+	if len(event.OwnerIDs) > 0 {
+		ownersErr = s.deliver(ctx, event.EventID, event.OwnerIDs, ownerMessage(event.AlertType, event.AlertID))
+	}
 
 	var issuerErr error
 	if event.IssuerID != uuid.Nil {

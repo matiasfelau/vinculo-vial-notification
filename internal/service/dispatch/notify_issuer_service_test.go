@@ -24,7 +24,7 @@ func TestNotifyIssuerService_EnviaElTextoDelContratoAlEmisor(t *testing.T) {
 		notice IssuerNotice
 		body   string
 	}{
-		{NoticeValidated, "Tu alerta fue validada. Le avisé al dueño."},
+		{NoticeValidated, "Tu alerta fue validada."},
 		{NoticeSeen, "El dueño leyó tu mensaje."},
 		{NoticeRejected, "No pudimos validar tu alerta."},
 		{NoticeExpired, "Tu alerta no tuvo respuesta."},

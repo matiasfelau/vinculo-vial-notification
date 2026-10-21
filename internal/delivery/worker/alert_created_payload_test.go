@@ -15,9 +15,13 @@ func TestParseAlertCreatedPayload_AceptaUnPayloadValido(t *testing.T) {
 	}
 }
 
-func TestParseAlertCreatedPayload_RechazaPayloadSinOwnerIDs(t *testing.T) {
-	if _, err := parseAlertCreatedPayload([]byte(`{"owner_ids": [], "alert_type": "choque"}`)); err == nil {
-		t.Fatal("se esperaba un error ante owner_ids vacio")
+func TestParseAlertCreatedPayload_AceptaOwnerIDsVacio(t *testing.T) {
+	payload, err := parseAlertCreatedPayload([]byte(`{"owner_ids": [], "alert_type": "choque"}`))
+	if err != nil {
+		t.Fatalf("parseAlertCreatedPayload() devolvio un error inesperado: %v", err)
+	}
+	if len(payload.OwnerIDs) != 0 {
+		t.Errorf("se esperaban 0 owner_ids, se obtuvieron %d", len(payload.OwnerIDs))
 	}
 }
 

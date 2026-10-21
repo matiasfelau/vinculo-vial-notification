@@ -9,7 +9,9 @@ import (
 
 // alertCreatedPayload es el contenido de payload para el evento
 // alert.created. El actor del envelope queda deliberadamente fuera de
-// esta estructura. AlertID es opcional: las alertas anteriores a US-09
+// esta estructura. OwnerIDs puede venir vacio (alerta sin destinatarios
+// todavia): si el evento es valido depende tambien del actor, y eso lo
+// resuelve el handler. AlertID es opcional: las alertas anteriores a US-09
 // no lo traen y se procesan sin deep link (uuid.Nil).
 type alertCreatedPayload struct {
 	OwnerIDs  []uuid.UUID `json:"owner_ids"`
@@ -21,9 +23,6 @@ func parseAlertCreatedPayload(raw json.RawMessage) (alertCreatedPayload, error) 
 	var payload alertCreatedPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return alertCreatedPayload{}, fmt.Errorf("payload invalido: %w", err)
-	}
-	if len(payload.OwnerIDs) == 0 {
-		return alertCreatedPayload{}, fmt.Errorf("payload sin owner_ids")
 	}
 	if payload.AlertType == "" {
 		return alertCreatedPayload{}, fmt.Errorf("payload sin alert_type")

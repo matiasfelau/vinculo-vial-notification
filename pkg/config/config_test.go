@@ -25,6 +25,7 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	t.Setenv("ALERT_REJECTED_QUEUE", "")
 	t.Setenv("ALERT_EXPIRED_QUEUE", "")
 	t.Setenv("ALERT_SEEN_QUEUE", "")
+	t.Setenv("ALERT_PENDING_DELIVERED_QUEUE", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -94,6 +95,9 @@ func TestLoad_AplicaValoresPorDefecto(t *testing.T) {
 	if cfg.AlertSeenQueue != "notification.alert-seen.q" {
 		t.Errorf("AlertSeenQueue = %q, se esperaba %q", cfg.AlertSeenQueue, "notification.alert-seen.q")
 	}
+	if cfg.PendingDeliveredQueue != "notification.alert-pending-delivered.q" {
+		t.Errorf("PendingDeliveredQueue = %q, se esperaba %q", cfg.PendingDeliveredQueue, "notification.alert-pending-delivered.q")
+	}
 }
 
 func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
@@ -117,6 +121,7 @@ func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
 	t.Setenv("ALERT_REJECTED_QUEUE", "otra.rejected.q")
 	t.Setenv("ALERT_EXPIRED_QUEUE", "otra.expired.q")
 	t.Setenv("ALERT_SEEN_QUEUE", "otra.seen.q")
+	t.Setenv("ALERT_PENDING_DELIVERED_QUEUE", "otra.pending-delivered.q")
 
 	cfg, err := Load()
 	if err != nil {
@@ -125,6 +130,10 @@ func TestLoad_RespetaVariablesExplicitas(t *testing.T) {
 
 	if cfg.AlertRejectedQueue != "otra.rejected.q" || cfg.AlertExpiredQueue != "otra.expired.q" || cfg.AlertSeenQueue != "otra.seen.q" {
 		t.Errorf("las colas de avisos al emisor no respetan las variables explicitas: %q %q %q", cfg.AlertRejectedQueue, cfg.AlertExpiredQueue, cfg.AlertSeenQueue)
+	}
+
+	if cfg.PendingDeliveredQueue != "otra.pending-delivered.q" {
+		t.Errorf("PendingDeliveredQueue = %q, no respeta la variable explicita", cfg.PendingDeliveredQueue)
 	}
 
 	if cfg.Port != "9090" {

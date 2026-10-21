@@ -12,6 +12,12 @@ const (
 
 	issuerTitle = "ViVIAna"
 
+	inboxBody = "Tenés alertas sin leer en el buzón."
+
+	// inboxUpdatedType es el valor de data.type con el que la app abre
+	// Recibidos.
+	inboxUpdatedType = "INBOX_UPDATED"
+
 	// issuerUpdateType es el valor de data.type con el que la app abre
 	// el chat del emisor de la alerta indicada por data.alert_id.
 	issuerUpdateType = "SENT_UPDATED"
@@ -29,7 +35,7 @@ const (
 )
 
 var issuerBodies = map[IssuerNotice]string{
-	NoticeValidated: "Tu alerta fue validada. Le avisé al dueño.",
+	NoticeValidated: "Tu alerta fue validada.",
 	NoticeSeen:      "El dueño leyó tu mensaje.",
 	NoticeRejected:  "No pudimos validar tu alerta.",
 	NoticeExpired:   "Tu alerta no tuvo respuesta.",
@@ -59,4 +65,15 @@ func issuerMessage(notice IssuerNotice, alertID uuid.UUID) domain.PushMessage {
 		}
 	}
 	return message
+}
+
+// inboxMessage arma el aviso al dueno que recibe alertas pendientes al
+// vincular su vehiculo. Es una unica push por entrega en lote: no lleva
+// alert_id ni cantidad.
+func inboxMessage() domain.PushMessage {
+	return domain.PushMessage{
+		Title: ownerTitle,
+		Body:  inboxBody,
+		Data:  map[string]string{"type": inboxUpdatedType},
+	}
 }
