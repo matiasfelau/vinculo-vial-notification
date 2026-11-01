@@ -12,12 +12,21 @@ type DispatchOutcome struct {
 	Invalid bool
 }
 
+// PushMessage es el contenido de una notificacion push: el texto visible
+// y los datos de enrutamiento que la app usa para el deep link. No debe
+// contener PII; Data puede ser nil cuando no hay deep link.
+type PushMessage struct {
+	Title string
+	Body  string
+	Data  map[string]string
+}
+
 // Dispatcher despacha una notificacion push generica, sin PII, a un
 // lote de tokens. La capa de dominio no conoce Firebase ni ningun
 // otro proveedor: solo depende de esta interfaz.
 type Dispatcher interface {
-	// Dispatch envia la notificacion correspondiente a alertType a los
-	// tokens dados, particionando internamente segun el limite del
-	// proveedor, y devuelve el resultado por token.
-	Dispatch(ctx context.Context, tokens []string, alertType string) ([]DispatchOutcome, error)
+	// Dispatch envia message a los tokens dados, particionando
+	// internamente segun el limite del proveedor, y devuelve el
+	// resultado por token.
+	Dispatch(ctx context.Context, tokens []string, message PushMessage) ([]DispatchOutcome, error)
 }

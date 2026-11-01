@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,9 +12,49 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/matiasfelau/vinculo-vial-notification/internal/domain"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/repository/memory"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/tokens"
 )
+
+// erroringTokenRepository devuelve siempre el mismo error configurado,
+// sin importar la operacion. Permite probar la clasificacion de
+// errores de TokenHandler sin depender de una base de datos real.
+type erroringTokenRepository struct {
+	err error
+}
+
+func (r *erroringTokenRepository) Upsert(context.Context, *domain.DeviceToken) error {
+	return r.err
+}
+
+func (r *erroringTokenRepository) Delete(context.Context, uuid.UUID, string) error {
+	return r.err
+}
+
+func (r *erroringTokenRepository) FindByOwnerIDs(context.Context, []uuid.UUID) ([]domain.DeviceToken, error) {
+	return nil, r.err
+}
+
+func (r *erroringTokenRepository) DeleteByTokens(context.Context, []string) error {
+	return r.err
+}
+
+func (r *erroringTokenRepository) DeleteByOwnerID(context.Context, uuid.UUID) error {
+	return r.err
+}
+
+func newFailingTestRouter(err error) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+
+	repo := &erroringTokenRepository{err: err}
+	handler := NewTokenHandler(tokens.NewRegisterTokenService(repo), tokens.NewDeleteTokenService(repo))
+
+	router := NewRouter()
+	RegisterTokenRoutes(router, handler)
+
+	return router
+}
 
 func newTestRouter() (*gin.Engine, *memory.DeviceTokenRepository) {
 	gin.SetMode(gin.TestMode)
@@ -108,5 +149,45 @@ func TestTokenHandler_DeleteBorraElTokenRegistrado(t *testing.T) {
 	found, _ := repo.FindByOwnerIDs(context.Background(), []uuid.UUID{ownerUUID})
 	if len(found) != 0 {
 		t.Fatalf("el token deberia haberse borrado, se obtuvo: %+v", found)
+	}
+}
+
+func TestTokenHandler_RegisterAnteDependenciaCaida_DevuelveServiceUnavailable(t *testing.T) {
+	router := newFailingTestRouter(context.DeadlineExceeded)
+
+	rec := doTokenRequest(router, http.MethodPost, uuid.New().String(), "token-1")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+}
+
+func TestTokenHandler_RegisterAnteErrorInesperadoDeLaBase_DevuelveInternalServerError(t *testing.T) {
+	router := newFailingTestRouter(errors.New("violacion de constraint inesperada"))
+
+	rec := doTokenRequest(router, http.MethodPost, uuid.New().String(), "token-1")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+}
+
+func TestTokenHandler_DeleteAnteDependenciaCaida_DevuelveServiceUnavailable(t *testing.T) {
+	router := newFailingTestRouter(context.DeadlineExceeded)
+
+	rec := doTokenRequest(router, http.MethodDelete, uuid.New().String(), "token-1")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+}
+
+func TestTokenHandler_DeleteAnteErrorInesperadoDeLaBase_DevuelveInternalServerError(t *testing.T) {
+	router := newFailingTestRouter(errors.New("violacion de constraint inesperada"))
+
+	rec := doTokenRequest(router, http.MethodDelete, uuid.New().String(), "token-1")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
 	}
 }

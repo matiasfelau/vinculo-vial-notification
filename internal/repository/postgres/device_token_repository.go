@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -13,11 +14,16 @@ import (
 // DeviceTokenRepository es la implementacion GORM/Postgres de
 // domain.DeviceTokenRepository.
 type DeviceTokenRepository struct {
-	db *gorm.DB
+	db           *gorm.DB
+	queryTimeout time.Duration
 }
 
-func NewDeviceTokenRepository(db *gorm.DB) *DeviceTokenRepository {
-	return &DeviceTokenRepository{db: db}
+// NewDeviceTokenRepository construye el repositorio. queryTimeout
+// acota cada consulta individual, independientemente del contexto que
+// traiga el llamador (la request HTTP y el ctx de los workers no
+// tienen deadline propio). queryTimeout <= 0 desactiva el limite.
+func NewDeviceTokenRepository(db *gorm.DB, queryTimeout time.Duration) *DeviceTokenRepository {
+	return &DeviceTokenRepository{db: db, queryTimeout: queryTimeout}
 }
 
 var _ domain.DeviceTokenRepository = (*DeviceTokenRepository)(nil)
@@ -26,6 +32,9 @@ var _ domain.DeviceTokenRepository = (*DeviceTokenRepository)(nil)
 // owner_id y actualiza updated_at. El id y el fcm_token de la fila
 // existente se preservan: DoUpdates solo toca las columnas indicadas.
 func (r *DeviceTokenRepository) Upsert(ctx context.Context, token *domain.DeviceToken) error {
+	ctx, cancel := withQueryTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
 	model := DeviceTokenModel{
 		ID:        token.ID,
 		OwnerID:   token.OwnerID,
@@ -42,6 +51,9 @@ func (r *DeviceTokenRepository) Upsert(ctx context.Context, token *domain.Device
 }
 
 func (r *DeviceTokenRepository) Delete(ctx context.Context, ownerID uuid.UUID, fcmToken string) error {
+	ctx, cancel := withQueryTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
 	return r.db.WithContext(ctx).
 		Where("owner_id = ? AND fcm_token = ?", ownerID, fcmToken).
 		Delete(&DeviceTokenModel{}).Error
@@ -51,6 +63,9 @@ func (r *DeviceTokenRepository) FindByOwnerIDs(ctx context.Context, ownerIDs []u
 	if len(ownerIDs) == 0 {
 		return nil, nil
 	}
+
+	ctx, cancel := withQueryTimeout(ctx, r.queryTimeout)
+	defer cancel()
 
 	var models []DeviceTokenModel
 	if err := r.db.WithContext(ctx).Where("owner_id IN ?", ownerIDs).Find(&models).Error; err != nil {
@@ -73,9 +88,16 @@ func (r *DeviceTokenRepository) DeleteByTokens(ctx context.Context, fcmTokens []
 	if len(fcmTokens) == 0 {
 		return nil
 	}
+
+	ctx, cancel := withQueryTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
 	return r.db.WithContext(ctx).Where("fcm_token IN ?", fcmTokens).Delete(&DeviceTokenModel{}).Error
 }
 
 func (r *DeviceTokenRepository) DeleteByOwnerID(ctx context.Context, ownerID uuid.UUID) error {
+	ctx, cancel := withQueryTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
 	return r.db.WithContext(ctx).Where("owner_id = ?", ownerID).Delete(&DeviceTokenModel{}).Error
 }

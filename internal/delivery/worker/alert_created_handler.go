@@ -2,7 +2,10 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log"
+
+	"github.com/google/uuid"
 
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/dispatch"
 )
@@ -12,7 +15,7 @@ import (
 // publica sobre el canal AMQP; en las pruebas se reemplaza por un
 // doble.
 type deadLetterPublisher interface {
-	PublishToDLQ(ctx context.Context, body []byte, reason string) error
+	PublishToDLQ(ctx context.Context, queue string, body []byte, reason string) error
 }
 
 // Outcome indica al consumer AMQP que accion tomar sobre el delivery
@@ -35,11 +38,12 @@ const (
 type AlertCreatedHandler struct {
 	dispatchService *dispatch.DispatchAlertService
 	deadLetters     deadLetterPublisher
+	queue           string
 	maxRetries      int64
 }
 
-func NewAlertCreatedHandler(dispatchService *dispatch.DispatchAlertService, deadLetters deadLetterPublisher, maxRetries int64) *AlertCreatedHandler {
-	return &AlertCreatedHandler{dispatchService: dispatchService, deadLetters: deadLetters, maxRetries: maxRetries}
+func NewAlertCreatedHandler(dispatchService *dispatch.DispatchAlertService, deadLetters deadLetterPublisher, queue string, maxRetries int64) *AlertCreatedHandler {
+	return &AlertCreatedHandler{dispatchService: dispatchService, deadLetters: deadLetters, queue: queue, maxRetries: maxRetries}
 }
 
 // Handle procesa un delivery. retries es la cantidad de veces que este
@@ -49,27 +53,31 @@ func NewAlertCreatedHandler(dispatchService *dispatch.DispatchAlertService, dead
 func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries int64) Outcome {
 	envelope, err := ParseEnvelope(body)
 	if err != nil {
-		h.sendToDeadLetter(ctx, body, err)
-		return OutcomeAck
+		return h.sendToDeadLetter(ctx, body, err)
 	}
 
 	payload, err := parseAlertCreatedPayload(envelope.Payload)
 	if err != nil {
-		h.sendToDeadLetter(ctx, body, err)
-		return OutcomeAck
+		return h.sendToDeadLetter(ctx, body, err)
+	}
+
+	issuerID := issuerFromActor(envelope)
+	if len(payload.OwnerIDs) == 0 && issuerID == uuid.Nil {
+		return h.sendToDeadLetter(ctx, body, errors.New("evento sin owner_ids y sin actor valido: no hay a quien avisar"))
 	}
 
 	event := dispatch.AlertCreatedEvent{
 		EventID:   envelope.EventID,
 		OwnerIDs:  payload.OwnerIDs,
 		AlertType: payload.AlertType,
+		AlertID:   payload.AlertID,
+		IssuerID:  issuerID,
 	}
 
 	if err := h.dispatchService.Execute(ctx, event); err != nil {
 		if retries >= h.maxRetries {
 			log.Printf("se supero MAX_RETRIES (%d) procesando el evento %s, se descarta a la dlq: %v", h.maxRetries, envelope.EventID, err)
-			h.sendToDeadLetter(ctx, body, err)
-			return OutcomeAck
+			return h.sendToDeadLetter(ctx, body, err)
 		}
 
 		log.Printf("fallo transitorio procesando el evento %s (intento %d de %d): %v", envelope.EventID, retries+1, h.maxRetries, err)
@@ -79,9 +87,31 @@ func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries i
 	return OutcomeAck
 }
 
-func (h *AlertCreatedHandler) sendToDeadLetter(ctx context.Context, body []byte, cause error) {
-	log.Printf("envelope invalido, se descarta a la dlq: %v", cause)
-	if err := h.deadLetters.PublishToDLQ(ctx, body, cause.Error()); err != nil {
-		log.Printf("no se pudo publicar a la dlq: %v", err)
+// issuerFromActor devuelve el emisor de la alerta (el actor del
+// envelope), o uuid.Nil si el actor no es un UUID valido. Un actor
+// invalido no invalida el evento: el aviso a los duenos no depende de el,
+// asi que solo se omite el aviso al emisor. El log lleva el eventId y no
+// el valor del actor.
+func issuerFromActor(envelope EventEnvelope) uuid.UUID {
+	issuerID, err := uuid.Parse(envelope.Actor)
+	if err != nil {
+		log.Printf("el evento %s no trae un actor valido, se omite el aviso al emisor", envelope.EventID)
+		return uuid.Nil
 	}
+	return issuerID
+}
+
+// sendToDeadLetter publica el mensaje a la DLQ y solo ACKea el
+// original si la DLQ confirmo la recepcion. Si la publicacion falla
+// (broker caido, DLQ sin confirmar), el mensaje se rechaza sin
+// requeue para que el ciclo normal de reintentos le de otra
+// oportunidad a la DLQ de estar disponible, en lugar de perderlo en
+// silencio con un ACK que no garantiza nada.
+func (h *AlertCreatedHandler) sendToDeadLetter(ctx context.Context, body []byte, cause error) Outcome {
+	log.Printf("descartando mensaje a la dlq: %v", cause)
+	if err := h.deadLetters.PublishToDLQ(ctx, h.queue, body, cause.Error()); err != nil {
+		log.Printf("no se pudo publicar a la dlq, se reintenta: %v", err)
+		return OutcomeNackNoRequeue
+	}
+	return OutcomeAck
 }

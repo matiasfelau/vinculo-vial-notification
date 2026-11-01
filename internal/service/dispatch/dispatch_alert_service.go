@@ -3,8 +3,6 @@ package dispatch
 import (
 	"context"
 	"errors"
-	"log"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -13,100 +11,69 @@ import (
 
 // AlertCreatedEvent es la porcion del Event Envelope de alert.created
 // que este servicio necesita, ya extraida y validada por el consumer.
-// El actor del evento no forma parte de esta estructura a proposito:
-// nunca debe llegar hasta el despacho.
+//
+// OwnerIDs puede estar vacio si IssuerID no lo esta. AlertID e IssuerID
+// son opcionales. AlertID viaja en el payload desde
+// US-09; las alertas anteriores no lo traen (uuid.Nil). IssuerID es el
+// actor del envelope: su unico uso permitido es resolver los tokens del
+// aviso al emisor. Nunca se incluye en el contenido de una push ni en
+// un log.
 type AlertCreatedEvent struct {
 	EventID   uuid.UUID
 	OwnerIDs  []uuid.UUID
 	AlertType string
+	AlertID   uuid.UUID
+	IssuerID  uuid.UUID
 }
 
-// DispatchAlertService procesa un evento alert.created: deduplica,
-// resuelve los tokens de los destinatarios y despacha la notificacion
-// push generica correspondiente.
+// DispatchAlertService procesa un evento alert.created: avisa a los
+// duenos (push generica, si hay) y, ademas, al emisor de la alerta.
+//
+// Son dos envios independientes, cada uno con su propia clave de
+// idempotencia: el event_id para los duenos y una derivada de el para el
+// emisor. Asi, si uno falla y el mensaje se reintenta, el que ya
+// confirmo se descarta como duplicado en lugar de enviarse de nuevo.
 type DispatchAlertService struct {
-	notificationLogs domain.NotificationLogRepository
-	deviceTokens     domain.DeviceTokenRepository
-	dispatcher       domain.Dispatcher
+	deliverer
 }
 
+// NewDispatchAlertService construye el servicio. deviceTokens se usa
+// fuera de la transaccion, para la limpieza de tokens invalidos.
 func NewDispatchAlertService(
-	notificationLogs domain.NotificationLogRepository,
+	unitOfWork domain.UnitOfWork,
 	deviceTokens domain.DeviceTokenRepository,
 	dispatcher domain.Dispatcher,
 ) *DispatchAlertService {
-	return &DispatchAlertService{
-		notificationLogs: notificationLogs,
-		deviceTokens:     deviceTokens,
-		dispatcher:       dispatcher,
-	}
+	return &DispatchAlertService{deliverer{
+		unitOfWork:   unitOfWork,
+		deviceTokens: deviceTokens,
+		dispatcher:   dispatcher,
+	}}
 }
 
-// Execute aplica el flujo documentado para alert.created. Un error de
-// retorno nil no implica que se haya despachado una push: cubre tanto
-// el redelivery de un evento ya procesado como la ausencia de tokens
-// para los destinatarios, casos que el consumer debe confirmar (ACK)
-// igual que un despacho exitoso.
+// issuerDedupeID deriva, de forma determinista, la clave de
+// idempotencia del aviso al emisor a partir del event_id: distinta de la
+// de los duenos (que usa el event_id tal cual) y estable entre
+// reintentos.
+func issuerDedupeID(eventID uuid.UUID) uuid.UUID {
+	return uuid.NewSHA1(eventID, []byte("issuer"))
+}
+
+// Execute aplica el flujo documentado para alert.created. Ambos envios
+// se intentan aunque uno falle; si alguno falla, el error vuelve al
+// consumer para que reintente el mensaje completo.
 func (s *DispatchAlertService) Execute(ctx context.Context, event AlertCreatedEvent) error {
-	logEntry := &domain.NotificationLog{
-		ID:        uuid.New(),
-		EventID:   event.EventID,
-		Status:    domain.StatusFailed,
-		CreatedAt: time.Now(),
+	// Una alerta puede validarse antes de tener destinatarios (la patente
+	// todavia no tiene duenos): en ese caso solo se avisa al emisor.
+	var ownersErr error
+	if len(event.OwnerIDs) > 0 {
+		ownersErr = s.deliver(ctx, event.EventID, event.OwnerIDs, ownerMessage(event.AlertType, event.AlertID))
 	}
 
-	if err := s.notificationLogs.Register(ctx, logEntry); err != nil {
-		if errors.Is(err, domain.ErrEventAlreadyProcessed) {
-			return nil
-		}
-		return err
+	var issuerErr error
+	if event.IssuerID != uuid.Nil {
+		issuerErr = s.deliver(ctx, issuerDedupeID(event.EventID), []uuid.UUID{event.IssuerID}, issuerMessage(NoticeValidated, event.AlertID))
 	}
 
-	tokens, err := s.deviceTokens.FindByOwnerIDs(ctx, event.OwnerIDs)
-	if err != nil {
-		return err
-	}
-
-	if len(tokens) == 0 {
-		return s.notificationLogs.UpdateStatus(ctx, event.EventID, domain.StatusSkippedNoToken)
-	}
-
-	fcmTokens := make([]string, len(tokens))
-	for i, token := range tokens {
-		fcmTokens[i] = token.FCMToken
-	}
-
-	outcomes, err := s.dispatcher.Dispatch(ctx, fcmTokens, event.AlertType)
-	if err != nil {
-		return err
-	}
-
-	s.cleanupInvalidTokens(ctx, outcomes)
-
-	return s.notificationLogs.UpdateStatus(ctx, event.EventID, domain.StatusSent)
-}
-
-// cleanupInvalidTokens borra los tokens que FCM reporto como
-// Unregistered o InvalidArgument (limpieza autonoma). Es
-// deliberadamente best-effort: el evento ya quedo registrado en el
-// paso de deduplicacion, asi que un redelivery posterior no
-// reintentaria esta limpieza (se descartaria como evento ya
-// procesado). Fallar el evento completo por esto forzaria un NACK
-// que nunca repetiria la limpieza y perderia el resultado del
-// despacho, que si tuvo exito.
-func (s *DispatchAlertService) cleanupInvalidTokens(ctx context.Context, outcomes []domain.DispatchOutcome) {
-	var invalidTokens []string
-	for _, outcome := range outcomes {
-		if outcome.Invalid {
-			invalidTokens = append(invalidTokens, outcome.Token)
-		}
-	}
-
-	if len(invalidTokens) == 0 {
-		return
-	}
-
-	if err := s.deviceTokens.DeleteByTokens(ctx, invalidTokens); err != nil {
-		log.Printf("no se pudieron eliminar los tokens invalidos reportados por fcm: %v", err)
-	}
+	return errors.Join(ownersErr, issuerErr)
 }
