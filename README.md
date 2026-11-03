@@ -88,12 +88,38 @@ el mensaje se reintenta, el otro no se repite. Un `alert.created` sin
 
 Un `alert.created` con `owner_ids: []` es valido (la alerta se valido antes
 de que la patente tenga duenos): se avisa solo al emisor y no va a la DLQ.
-Sin `owner_ids` y sin `actor` valido no hay a quien avisar, y el mensaje
-se descarta a la DLQ como invalido.
 
 Privacidad: el `actor` solo se usa para buscar los tokens del emisor. No se
 guarda en `notification_log`, no viaja en el contenido de la push y no se
 loguea junto al payload.
+
+## Eventos sin `actor` (US-11)
+
+Cuando un emisor se da de baja, sus alertas quedan con `issuer_id = NULL` y
+todo evento cuyo `actor` era el emisor sale **sin `actor`** (ausente, `null`
+o vacio). Eso no es un error: no hay a quien avisar y nunca lleva a la DLQ.
+
+| Evento | Sin `actor` |
+|---|---|
+| `alert.created` con `owner_ids` | Avisa solo a los dueños |
+| `alert.created` sin `owner_ids` | Ack sin push |
+| `alert.seen`, `alert.expired`, `alert.rejected` | Ack sin push |
+
+Un `actor` presente que no es un UUID sigue siendo invalido: en
+`alert.seen`, `alert.expired`, `alert.rejected` y en `alert.created` sin
+`owner_ids` va directo a la DLQ. Un `alert.created` con `owner_ids` y un
+`actor` que no es UUID avisa a los dueños y omite el aviso al emisor, como
+antes. El resto de la validacion no cambia: un payload invalido va a la DLQ
+con o sin `actor`.
+
+La baja no tiene un evento propio para este servicio. Identity publica
+`user.sessions.revoked` junto con `user.deleted` (con el usuario en `actor`),
+y el consumidor existente de `SESSIONS_REVOKED_QUEUE` borra todos los
+device tokens de ese usuario. `user.sessions.revoked` sigue exigiendo un
+`actor` UUID valido: sin el no se sabe de quien borrar los tokens. Un token
+que la app registre dentro de los `ACCESS_TOKEN_TTL_MINUTES` posteriores a
+la baja queda huerfano, pero nunca recibe pushes porque ya no hay eventos de
+ese usuario.
 
 ## Alertas pendientes entregadas (US-10)
 

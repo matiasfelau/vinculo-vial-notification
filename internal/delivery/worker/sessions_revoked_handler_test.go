@@ -58,6 +58,51 @@ func TestSessionsRevokedHandler_ProcesaUnEventoValido_BorraLosTokensYAck(t *test
 	}
 }
 
+// La baja de cuenta (US-11) no tiene evento propio para este servicio:
+// Identity publica user.sessions.revoked junto con user.deleted, y este
+// consumidor borra los tokens del usuario. Cubre todos sus dispositivos y
+// no toca los de otros usuarios.
+func TestSessionsRevokedHandler_BajaDeCuenta_BorraTodosLosTokensDelUsuarioYSoloLosSuyos(t *testing.T) {
+	deviceTokens := memory.NewDeviceTokenRepository()
+	baja, otro := uuid.New(), uuid.New()
+	for _, r := range []struct {
+		owner uuid.UUID
+		token string
+	}{{baja, "celular"}, {baja, "tablet"}, {otro, "celular-ajeno"}} {
+		if err := deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: r.owner, FCMToken: r.token, UpdatedAt: time.Now()}); err != nil {
+			t.Fatalf("Upsert() devolvio un error inesperado: %v", err)
+		}
+	}
+
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens))
+	deadLetters := &fakeDeadLetterPublisher{}
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
+
+	body := []byte(`{
+		"eventId": "` + uuid.New().String() + `",
+		"eventType": "user.sessions.revoked",
+		"timestamp": "2026-01-01T00:00:00Z",
+		"producer": "vinculo-vial-identity",
+		"actor": "` + baja.String() + `",
+		"payload": {"reason": "account_deleted"}
+	}`)
+	if outcome := handler.Handle(context.Background(), body, 0); outcome != OutcomeAck {
+		t.Fatalf("Outcome = %v, se esperaba OutcomeAck", outcome)
+	}
+
+	delUsuario, _ := deviceTokens.FindByOwnerIDs(context.Background(), []uuid.UUID{baja})
+	if len(delUsuario) != 0 {
+		t.Errorf("los tokens del usuario dado de baja deberian haberse borrado, quedaron: %+v", delUsuario)
+	}
+	deOtro, _ := deviceTokens.FindByOwnerIDs(context.Background(), []uuid.UUID{otro})
+	if len(deOtro) != 1 {
+		t.Errorf("los tokens de otro usuario no deberian tocarse, quedaron: %+v", deOtro)
+	}
+	if len(deadLetters.published) != 0 {
+		t.Errorf("no deberia haberse publicado nada a la dlq")
+	}
+}
+
 func TestSessionsRevokedHandler_EnvelopeMalFormado_AckYDLQ(t *testing.T) {
 	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()))
 	deadLetters := &fakeDeadLetterPublisher{}

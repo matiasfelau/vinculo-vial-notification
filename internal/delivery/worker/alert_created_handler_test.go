@@ -130,25 +130,30 @@ func TestAlertCreatedHandler_EnvelopeMalFormadoYFalloAlPublicarEnLaDLQ_NackSinRe
 	}
 }
 
-func TestAlertCreatedHandler_PayloadSinOwnerIDs_AckYDLQ(t *testing.T) {
-	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()), memory.NewDeviceTokenRepository(), &fakeDispatcher{})
+// Desde US-11, un alert.created sin owner_ids y sin actor (el emisor se dio
+// de baja) es valido: se confirma sin push y no va a la DLQ.
+func TestAlertCreatedHandler_PayloadSinOwnerIDsYSinActor_AckSinDLQ(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	service := dispatch.NewDispatchAlertService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), memory.NewDeviceTokenRepository()), memory.NewDeviceTokenRepository(), dispatcher)
 	deadLetters := &fakeDeadLetterPublisher{}
 	handler := NewAlertCreatedHandler(service, deadLetters, testAlertQueue, 3)
 
 	body := []byte(`{
 		"eventId": "11111111-1111-1111-1111-111111111111",
 		"eventType": "alert.created",
-		"payload": {"owner_ids": [], "alert_type": "choque"}
+		"payload": {"alert_type": "choque"}
 	}`)
 	outcome := handler.Handle(context.Background(), body, 0)
 
 	if outcome != OutcomeAck {
 		t.Fatalf("Outcome = %v, se esperaba OutcomeAck", outcome)
 	}
-	if len(deadLetters.published) != 1 {
-		t.Fatalf("se esperaba un mensaje publicado a la dlq, se publicaron %d", len(deadLetters.published))
+	if len(deadLetters.published) != 0 {
+		t.Fatalf("no deberia haberse publicado nada a la dlq, se publicaron %d mensajes", len(deadLetters.published))
 	}
-	assertDeadLetterQueue(t, deadLetters, testAlertQueue)
+	if len(dispatcher.messages) != 0 {
+		t.Errorf("no deberia despacharse nada")
+	}
 }
 
 func TestAlertCreatedHandler_FalloTransitorioDelDispatcher_NackSinRequeue(t *testing.T) {

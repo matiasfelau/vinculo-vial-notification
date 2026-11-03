@@ -72,6 +72,19 @@ func (c issuerConsumer) envelope(eventID, actor, alertID string) []byte {
 	}`)
 }
 
+// envelopeActorCrudo arma el envelope con el campo actor tal cual se pasa
+// (incluida su coma final), o sin el si actorField es vacio.
+func (c issuerConsumer) envelopeActorCrudo(eventID, actorField, alertID string) []byte {
+	return []byte(`{
+		"eventId": "` + eventID + `",
+		"eventType": "` + c.eventType + `",
+		"timestamp": "2026-01-01T00:00:00Z",
+		"producer": "vinculo-vial-alert",
+		` + actorField + `
+		"payload": ` + strings.Replace(c.payload, "%s", alertID, 1) + `
+	}`)
+}
+
 type issuerFixture struct {
 	handler     *IssuerNoticeHandler
 	dispatcher  *fakeDispatcher
@@ -148,17 +161,63 @@ func TestIssuerNoticeHandler_ActorSinTokens_AckSinError(t *testing.T) {
 	}
 }
 
+func TestIssuerNoticeHandler_SinActor_AckSinPushNiDLQ(t *testing.T) {
+	for _, c := range issuerConsumers() {
+		for name, actorField := range actorAusente() {
+			t.Run(c.name+"/"+name, func(t *testing.T) {
+				f := c.fixture(3)
+				// Hay tokens registrados: aun asi, sin actor no se avisa a nadie.
+				f.addToken(t, uuid.New(), "token-ajeno")
+
+				outcome := f.handler.Handle(context.Background(), c.envelopeActorCrudo(uuid.New().String(), actorField, uuid.New().String()), 0)
+
+				if outcome != OutcomeAck {
+					t.Fatalf("Outcome = %v, se esperaba OutcomeAck", outcome)
+				}
+				if len(f.dispatcher.messages) != 0 {
+					t.Errorf("sin actor no deberia despacharse nada, se hicieron %d envios", len(f.dispatcher.messages))
+				}
+				if len(f.deadLetters.published) != 0 {
+					t.Errorf("la falta de actor no deberia llevar a la dlq, se publicaron %d mensajes", len(f.deadLetters.published))
+				}
+			})
+		}
+	}
+}
+
+func TestIssuerNoticeHandler_SinActor_RedeliveryNoFalla(t *testing.T) {
+	for _, c := range issuerConsumers() {
+		t.Run(c.name, func(t *testing.T) {
+			f := c.fixture(3)
+			body := c.envelopeActorCrudo(uuid.New().String(), ``, uuid.New().String())
+
+			first := f.handler.Handle(context.Background(), body, 0)
+			second := f.handler.Handle(context.Background(), body, 0)
+
+			if first != OutcomeAck || second != OutcomeAck {
+				t.Fatalf("ambas entregas deberian confirmarse: primera=%v segunda=%v", first, second)
+			}
+			if len(f.deadLetters.published) != 0 {
+				t.Errorf("no deberia haberse publicado nada a la dlq")
+			}
+		})
+	}
+}
+
 func TestIssuerNoticeHandler_MensajeInvalido_AckYDLQDeSuPropiaCola(t *testing.T) {
 	invalid := map[string]func(c issuerConsumer) []byte{
 		"envelope mal formado": func(issuerConsumer) []byte { return []byte(`{esto no es json valido`) },
 		"envelope sin eventId": func(issuerConsumer) []byte {
 			return []byte(`{"eventType": "alert.seen", "actor": "` + uuid.New().String() + `", "payload": {"alert_id": "` + uuid.New().String() + `"}}`)
 		},
-		"actor ausente": func(c issuerConsumer) []byte {
-			return c.envelope(uuid.New().String(), "", uuid.New().String())
-		},
 		"actor que no es uuid": func(c issuerConsumer) []byte {
 			return c.envelope(uuid.New().String(), "no-es-uuid", uuid.New().String())
+		},
+		"sin actor y payload sin alert_id": func(c issuerConsumer) []byte {
+			return []byte(`{"eventId": "` + uuid.New().String() + `", "eventType": "` + c.eventType + `", "payload": {}}`)
+		},
+		"sin actor y alert_id que no es uuid": func(c issuerConsumer) []byte {
+			return c.envelopeActorCrudo(uuid.New().String(), ``, "xyz")
 		},
 		"payload sin alert_id": func(c issuerConsumer) []byte {
 			return []byte(`{"eventId": "` + uuid.New().String() + `", "eventType": "` + c.eventType + `", "actor": "` + uuid.New().String() + `", "payload": {}}`)
