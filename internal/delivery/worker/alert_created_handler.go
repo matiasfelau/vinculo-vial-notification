@@ -62,8 +62,14 @@ func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries i
 	}
 
 	issuerID := issuerFromActor(envelope)
-	if len(payload.OwnerIDs) == 0 && issuerID == uuid.Nil {
-		return h.sendToDeadLetter(ctx, body, errors.New("evento sin owner_ids y sin actor valido: no hay a quien avisar"))
+	if len(payload.OwnerIDs) == 0 {
+		if !envelope.HasActor() {
+			log.Printf("el evento %s no trae owner_ids ni actor (emisor dado de baja): no hay a quien avisar, se confirma sin push", envelope.EventID)
+			return OutcomeAck
+		}
+		if issuerID == uuid.Nil {
+			return h.sendToDeadLetter(ctx, body, errors.New("evento sin owner_ids y con actor invalido: no hay a quien avisar"))
+		}
 	}
 
 	event := dispatch.AlertCreatedEvent{
@@ -88,11 +94,15 @@ func (h *AlertCreatedHandler) Handle(ctx context.Context, body []byte, retries i
 }
 
 // issuerFromActor devuelve el emisor de la alerta (el actor del
-// envelope), o uuid.Nil si el actor no es un UUID valido. Un actor
-// invalido no invalida el evento: el aviso a los duenos no depende de el,
-// asi que solo se omite el aviso al emisor. El log lleva el eventId y no
-// el valor del actor.
+// envelope), o uuid.Nil si no hay actor o no es un UUID valido. Ni un
+// actor ausente (emisor dado de baja) ni uno invalido invalidan el
+// evento por si solos: el aviso a los duenos no depende de el, asi que
+// solo se omite el aviso al emisor. Que el evento no tenga a quien avisar
+// lo decide Handle. El log lleva el eventId y no el valor del actor.
 func issuerFromActor(envelope EventEnvelope) uuid.UUID {
+	if !envelope.HasActor() {
+		return uuid.Nil
+	}
 	issuerID, err := uuid.Parse(envelope.Actor)
 	if err != nil {
 		log.Printf("el evento %s no trae un actor valido, se omite el aviso al emisor", envelope.EventID)

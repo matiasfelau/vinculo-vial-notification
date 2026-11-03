@@ -13,6 +13,9 @@ import (
 // avisa (el emisor en alert.*, el usuario en user.sessions.revoked): se
 // usa solo para resolver sus device tokens. Nunca se propaga al
 // contenido de una push, ni a un log junto al payload.
+//
+// El actor puede faltar: las alertas de un emisor dado de baja salen sin
+// el (US-11). Ver HasActor.
 type EventEnvelope struct {
 	EventID   uuid.UUID       `json:"eventId"`
 	EventType string          `json:"eventType"`
@@ -20,6 +23,13 @@ type EventEnvelope struct {
 	Producer  string          `json:"producer"`
 	Actor     string          `json:"actor"`
 	Payload   json.RawMessage `json:"payload"`
+}
+
+// HasActor indica si el envelope trae actor. Un actor ausente, null o
+// vacio es un evento legitimo sin emisor; uno presente que no es un UUID
+// es invalido y lo decide cada handler.
+func (e EventEnvelope) HasActor() bool {
+	return e.Actor != ""
 }
 
 // ParseEnvelope decodifica el sobre y valida el minimo indispensable
