@@ -18,6 +18,10 @@ import (
 // Los tres eventos comparten forma y tratamiento; solo cambia el aviso.
 // Por eso hay un unico tipo con un constructor por consumidor.
 //
+// Sin actor (el emisor se dio de baja, US-11) no hay a quien avisar: el
+// mensaje se confirma sin push y nunca va a la DLQ. Un actor presente que
+// no es un UUID si es invalido.
+//
 // Anonimato: los logs de este handler registran el eventId y la causa,
 // nunca el actor ni el contenido del payload.
 type IssuerNoticeHandler struct {
@@ -59,14 +63,22 @@ func (h *IssuerNoticeHandler) Handle(ctx context.Context, body []byte, retries i
 		return h.sendToDeadLetter(ctx, body, err)
 	}
 
-	issuerID, err := uuid.Parse(envelope.Actor)
-	if err != nil {
-		return h.sendToDeadLetter(ctx, body, fmt.Errorf("actor invalido: %w", err))
+	var issuerID uuid.UUID
+	if envelope.HasActor() {
+		issuerID, err = uuid.Parse(envelope.Actor)
+		if err != nil {
+			return h.sendToDeadLetter(ctx, body, fmt.Errorf("actor invalido: %w", err))
+		}
 	}
 
 	payload, err := parseIssuerNoticePayload(envelope.Payload)
 	if err != nil {
 		return h.sendToDeadLetter(ctx, body, err)
+	}
+
+	if !envelope.HasActor() {
+		log.Printf("el evento %s de %s no trae actor (emisor dado de baja): no hay a quien avisar, se confirma sin push", envelope.EventID, h.queue)
+		return OutcomeAck
 	}
 
 	event := dispatch.IssuerNoticeEvent{
