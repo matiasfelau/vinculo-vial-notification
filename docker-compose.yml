@@ -17,6 +17,23 @@ services:
       notification-db:
         condition: service_healthy
 
+  # Servidor SMTP de desarrollo (US-13): recibe los emails sin entregarlos.
+  # El SMTP (1025) solo es alcanzable dentro de notification-internal, como
+  # "mailpit:1025"; la bandeja web se publica unicamente en el loopback del
+  # host, porque los mails contienen codigos de un solo uso.
+  mailpit:
+    container_name: vinculo-vial-mailpit
+    image: axllent/mailpit:v1.33.1
+    ports:
+      - "127.0.0.1:8025:8025"
+    networks:
+      - notification-internal
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   notification-db:
     container_name: vinculo-vial-notification-db
     image: postgres:16-alpine
