@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -31,11 +32,17 @@ const shutdownTimeout = 10 * time.Second
 // un worker que quedo colgado pese a los timeouts propios de sus
 // dependencias: sin este limite, un SIGTERM podria no completar
 // nunca.
-const workerShutdownTimeout = 15 * time.Second
+//
+// Es variable solo para que las pruebas de run puedan acortarla.
+var workerShutdownTimeout = 15 * time.Second
 
 // exitFunc se indirecciona para poder testear runWorker sin terminar
 // el proceso de pruebas.
 var exitFunc = os.Exit
+
+// connectDB se indirecciona para poder probar run con una base en
+// memoria, sin un Postgres real.
+var connectDB = postgres.Connect
 
 func main() {
 	cfg, err := config.Load()
@@ -43,23 +50,41 @@ func main() {
 		log.Fatalf("configuracion invalida: %v", err)
 	}
 
-	db, err := postgres.Connect(cfg.DatabaseURL, postgres.PoolConfig{
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		// Una vez recibida la senial, se restaura el comportamiento por
+		// defecto: una segunda senial durante el apagado mata el proceso.
+		<-ctx.Done()
+		stop()
+	}()
+
+	if err := run(ctx, cfg); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run arma las dependencias, levanta la API HTTP y los workers, y
+// bloquea hasta que ctx se cancela o el servidor falla. Devuelve nil
+// tras un apagado ordenado.
+func run(ctx context.Context, cfg *config.Config) error {
+	db, err := connectDB(cfg.DatabaseURL, postgres.PoolConfig{
 		StatementTimeoutMS: cfg.DBStatementTimeoutMS,
 		MaxOpenConns:       cfg.DBMaxOpenConns,
 		MaxIdleConns:       cfg.DBMaxIdleConns,
 		ConnMaxLifetime:    time.Duration(cfg.DBConnMaxLifetimeMinutes) * time.Minute,
 	})
 	if err != nil {
-		log.Fatalf("no se pudo conectar a la base de datos: %v", err)
+		return fmt.Errorf("no se pudo conectar a la base de datos: %w", err)
 	}
 
 	if err := postgres.AutoMigrate(db); err != nil {
-		log.Fatalf("no se pudo migrar el esquema: %v", err)
+		return fmt.Errorf("no se pudo migrar el esquema: %w", err)
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		log.Fatalf("no se pudo obtener el *sql.DB subyacente: %v", err)
+		return fmt.Errorf("no se pudo obtener el *sql.DB subyacente: %w", err)
 	}
 
 	queryTimeout := time.Duration(cfg.DBQueryTimeoutSeconds) * time.Second
@@ -103,12 +128,9 @@ func main() {
 		IdleTimeout:  time.Duration(cfg.HTTPIdleTimeoutSeconds) * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	messagingClient, err := fcm.NewMessagingClient(context.Background(), cfg.FirebaseCredentialsPath)
 	if err != nil {
-		log.Fatalf("no se pudo inicializar el cliente de firebase: %v", err)
+		return fmt.Errorf("no se pudo inicializar el cliente de firebase: %w", err)
 	}
 	fcmBreaker := breaker.New(breaker.Config{
 		FailureThreshold: cfg.FCMBreakerFailureThreshold,
@@ -137,7 +159,7 @@ func main() {
 		Timeout:  cfg.SMTP.Timeout,
 	}, smtpBreaker)
 	if err != nil {
-		log.Fatalf("no se pudo inicializar el cliente smtp: %v", err)
+		return fmt.Errorf("no se pudo inicializar el cliente smtp: %w", err)
 	}
 	sendEmailService := emailservice.NewSendEmailService(unitOfWork, emailSender)
 
@@ -213,17 +235,16 @@ func main() {
 	select {
 	case err := <-serverErrors:
 		if err != nil {
-			log.Fatalf("error al iniciar el servidor http: %v", err)
+			return fmt.Errorf("error al iniciar el servidor http: %w", err)
 		}
 	case <-ctx.Done():
-		stop()
 		log.Println("senial de apagado recibida, cerrando servidor http")
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Fatalf("error durante el apagado del servidor http: %v", err)
+			return fmt.Errorf("error durante el apagado del servidor http: %w", err)
 		}
 
 		log.Println("servidor http detenido correctamente")
@@ -233,9 +254,10 @@ func main() {
 	if !waitForWorkers(&workers, workerShutdownTimeout) {
 		log.Printf("los workers no terminaron dentro de %s, forzando la salida del proceso", workerShutdownTimeout)
 		exitFunc(1)
-		return
+		return nil
 	}
 	log.Println("workers detenidos correctamente")
+	return nil
 }
 
 // waitForWorkers espera a que wg termine, acotando la espera a

@@ -259,3 +259,25 @@ func TestSessionsRevokedHandler_PasswordResetSeTrataIgualQueLosDemasMotivos(t *t
 		})
 	}
 }
+
+func TestSessionsRevokedHandler_PayloadQueNoEsUnObjeto_AckYDLQSinBorrarTokens(t *testing.T) {
+	deviceTokens := memory.NewDeviceTokenRepository()
+	owner := uuid.New()
+	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1", UpdatedAt: time.Now()})
+
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens))
+	deadLetters := &fakeDeadLetterPublisher{}
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
+
+	body := []byte(`{"eventId": "` + uuid.New().String() + `", "eventType": "user.sessions.revoked", "actor": "` + owner.String() + `", "payload": "no es un objeto"}`)
+	outcome := handler.Handle(context.Background(), body, 0)
+
+	if outcome != OutcomeAck {
+		t.Fatalf("Outcome = %v, se esperaba OutcomeAck una vez publicado a la dlq", outcome)
+	}
+	assertDeadLetterQueue(t, deadLetters, testSessionsQueue)
+	restantes, _ := deviceTokens.FindByOwnerIDs(context.Background(), []uuid.UUID{owner})
+	if len(restantes) != 1 {
+		t.Fatalf("un evento invalido no debe borrar tokens, quedaron %d", len(restantes))
+	}
+}
