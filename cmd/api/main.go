@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/matiasfelau/vinculo-vial-notification/internal/client/fcm"
+	smtpclient "github.com/matiasfelau/vinculo-vial-notification/internal/client/smtp"
 	deliveryhttp "github.com/matiasfelau/vinculo-vial-notification/internal/delivery/http"
 	deliveryworker "github.com/matiasfelau/vinculo-vial-notification/internal/delivery/worker"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/repository/postgres"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/dispatch"
+	emailservice "github.com/matiasfelau/vinculo-vial-notification/internal/service/email"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/sessions"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/tokens"
 	"github.com/matiasfelau/vinculo-vial-notification/pkg/breaker"
@@ -75,6 +77,7 @@ func main() {
 	expiredBrokerStatus := &deliveryworker.ConnectionStatus{}
 	seenBrokerStatus := &deliveryworker.ConnectionStatus{}
 	pendingDeliveredBrokerStatus := &deliveryworker.ConnectionStatus{}
+	emailRequestedBrokerStatus := &deliveryworker.ConnectionStatus{}
 
 	readinessHandler := deliveryhttp.NewReadinessHandler(sqlDB)
 	depsHealthHandler := deliveryhttp.NewDepsHealthHandler(sqlDB, map[string]deliveryhttp.ConnectionChecker{
@@ -84,6 +87,7 @@ func main() {
 		"rabbitmq_alert_expired":           expiredBrokerStatus,
 		"rabbitmq_alert_seen":              seenBrokerStatus,
 		"rabbitmq_alert_pending_delivered": pendingDeliveredBrokerStatus,
+		"rabbitmq_email_requested":         emailRequestedBrokerStatus,
 	})
 
 	router := deliveryhttp.NewRouter()
@@ -118,8 +122,27 @@ func main() {
 	notifyInboxService := dispatch.NewNotifyInboxService(unitOfWork, deviceTokenRepository, fcmDispatcher)
 	revokeSessionsService := sessions.NewRevokeSessionsService(unitOfWork)
 
+	smtpBreaker := breaker.New(breaker.Config{
+		FailureThreshold: cfg.SMTP.BreakerFailureThreshold,
+		Window:           time.Duration(cfg.SMTP.BreakerWindowSeconds) * time.Second,
+		OpenDuration:     time.Duration(cfg.SMTP.BreakerOpenSeconds) * time.Second,
+	})
+	emailSender, err := smtpclient.NewSender(smtpclient.Config{
+		Host:     cfg.SMTP.Host,
+		Port:     cfg.SMTP.Port,
+		Username: cfg.SMTP.Username,
+		Password: cfg.SMTP.Password,
+		From:     cfg.SMTP.From,
+		StartTLS: cfg.SMTP.StartTLS,
+		Timeout:  cfg.SMTP.Timeout,
+	}, smtpBreaker)
+	if err != nil {
+		log.Fatalf("no se pudo inicializar el cliente smtp: %v", err)
+	}
+	sendEmailService := emailservice.NewSendEmailService(unitOfWork, emailSender)
+
 	var workers sync.WaitGroup
-	workers.Add(6)
+	workers.Add(7)
 
 	go runWorker(&workers, "alert.created", func() {
 		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, cfg.RabbitMQPrefetch, alertBrokerStatus, func(channel deliveryworker.AMQPChannel) *deliveryworker.Consumer {
@@ -142,6 +165,14 @@ func main() {
 			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
 			handler := deliveryworker.NewPendingDeliveredHandler(notifyInboxService, deadLetters, cfg.PendingDeliveredQueue, int64(cfg.MaxRetries))
 			return deliveryworker.NewConsumer(channel, cfg.PendingDeliveredQueue, handler)
+		})
+	})
+
+	go runWorker(&workers, "email.requested", func() {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.EmailRequestedQueue, cfg.RabbitMQPrefetch, emailRequestedBrokerStatus, func(channel deliveryworker.AMQPChannel) *deliveryworker.Consumer {
+			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
+			handler := deliveryworker.NewEmailRequestedHandler(sendEmailService, deadLetters, cfg.EmailRequestedQueue, int64(cfg.MaxRetries))
+			return deliveryworker.NewConsumer(channel, cfg.EmailRequestedQueue, handler)
 		})
 	})
 

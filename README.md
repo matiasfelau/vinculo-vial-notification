@@ -19,6 +19,9 @@ despachar notificaciones push a traves de Firebase Cloud Messaging.
   `owner_ids` ("Tenés alertas sin leer en el buzón."). Nunca al emisor.
 - Consumo del evento `user.sessions.revoked` y limpieza de tokens ante la
   revocacion de sesiones de un usuario.
+- Consumo de `email.requested` y envio por SMTP de los codigos y avisos de
+  Identity (verificacion de email, recuperacion de contraseña), con
+  plantillas en español. Ver "Canal de email (US-13)".
 - Deduplicacion de eventos por `eventId` para garantizar entrega efectiva
   una unica vez pese a la semantica at-least-once de RabbitMQ.
 
@@ -32,7 +35,7 @@ El servicio sigue Clean Architecture con los siguientes limites:
 /internal/service    casos de uso
 /internal/repository capa de persistencia (Postgres via GORM)
 /internal/delivery   adaptadores de entrada (HTTP y consumidores de RabbitMQ)
-/internal/client     adaptadores de salida (Firebase Admin SDK)
+/internal/client     adaptadores de salida (Firebase Admin SDK, SMTP)
 /pkg/config          carga de configuracion desde variables de entorno
 ```
 
@@ -154,6 +157,111 @@ TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/notification_test
 
 En CI las corre un paso aparte del workflow, contra un servicio `postgres`.
 
+Las pruebas del worker (`internal/delivery/worker`) tambien llevan el tag
+`integration` y necesitan un RabbitMQ con la topologia de Core (con
+`RETRY_TTL_MS` bajo, por ejemplo 1000) y un Mailpit:
+
+- `dlq_integration_test.go`: el ciclo real de retry y DLQ de las colas de
+  alert.created y user.sessions.revoked.
+- `email_integration_test.go`: el mismo ciclo para `email.requested`, cuya
+  DLQ debe quedar con `to` y `code` en `null`, y ademas publica un
+  `email.requested` por cada plantilla, lo consume el worker real, lo envia
+  el adaptador SMTP real y verifica en la API de Mailpit el asunto, el
+  remitente, el destinatario y los dos cuerpos.
+
+```
+docker run -d --name mailpit -p 127.0.0.1:1025:1025 -p 127.0.0.1:8025:8025 axllent/mailpit:v1.33.1
+TEST_RABBITMQ_URL=amqp://guest:guest@localhost:5672/ \
+  TEST_SMTP_ADDR=localhost:1025 TEST_MAILPIT_API=http://127.0.0.1:8025 \
+  go test -tags=integration -count=1 -run Integracion ./internal/delivery/worker/
+```
+
+En el CI de este repo solo corre el paso de Postgres; estas dos suites se
+corren a mano.
+
+## Canal de email (US-13)
+
+Notification envia por email los codigos y avisos de Identity. Consume
+`email.requested` de `notification.email-requested.q` (con su `.retry` y su
+`.dlq`, declaradas por Core) y lo entrega por SMTP: Mailpit en local, el
+endpoint SMTP de SES en AWS, solo con cambio de configuracion.
+
+```
+{ "template": "<plantilla>", "to": "<email>", "code": "<6 digitos>" | null, "expires_at": "RFC3339" | null }
+```
+
+| Plantilla | Asunto | `code` / `expires_at` |
+|---|---|---|
+| `EMAIL_VERIFICATION` | Tu código de Vinculo Vial | Obligatorios |
+| `ACCOUNT_EXISTS` | Ya tenés una cuenta en Vinculo Vial | No se usan |
+| `PASSWORD_RESET` | Recuperá tu contraseña | Obligatorios |
+| `PASSWORD_CHANGED` | Cambiaste tu contraseña | No se usan; la fecha es la del evento, en `America/Argentina/Buenos_Aires` |
+
+Las plantillas (texto plano y HTML minimo, en español) estan en
+`internal/service/email/templates/`, incrustadas en el binario. No llevan
+imagenes remotas, enlaces ni seguimiento. El vencimiento se muestra como los
+minutos que faltan al momento del envio.
+
+**Comportamiento del consumidor**
+
+- **Idempotente por `event_id`**, como el resto: el registro del evento y
+  el envio van en una misma transaccion que solo se confirma si el servidor
+  SMTP acepto el mensaje. Si el servidor acepta y el commit falla, el
+  reintento lo vuelve a enviar (at-least-once).
+- **Vencido:** si `expires_at` ya paso, se confirma sin enviar y sin DLQ.
+- **Falla transitoria** (timeout, conexion, respuesta 4xx, circuito abierto,
+  y tambien un 5xx en el saludo, STARTTLS o la autenticacion, que son
+  problemas de la conexion o de la configuracion y no de un mensaje): va a
+  `.retry`; agotado `MAX_RETRIES`, a la DLQ.
+- **Rechazo permanente** del servidor (5xx a `MAIL`, `RCPT` o `DATA`): se
+  confirma, se registra como `FAILED` y se loguea con el codigo de la
+  respuesta, sin destinatario ni el texto del servidor (que suele repetirlo).
+  No abre el breaker.
+- **Pedido invalido** (plantilla desconocida, `to` mal formado, falta `code`
+  o `expires_at` donde corresponde, payload ilegible): va directo a la DLQ,
+  sin reintentos.
+- **El `actor` no se usa:** es nulo en `EMAIL_VERIFICATION` y
+  `ACCOUNT_EXISTS` porque todavia no hay cuenta.
+
+**Datos personales.** Nunca se loguean `to` ni `code`, ni se incluyen en un
+error. Al publicar un `email.requested` en la DLQ, `to` y `code` van en
+`null`; el resto del envelope se conserva para diagnosticar. Si el cuerpo es
+tan ilegible que no se puede redactar, se publica `{}`. El registro de
+idempotencia (`notification_log`) guarda solo `event_id` y el resultado.
+
+**Resiliencia.** El adaptador (`internal/client/smtp`) acota toda la
+operacion con `SMTP_TIMEOUT` y se protege con un circuit breaker propio, con
+el mismo criterio que el de FCM: cuentan como falla los timeouts, los errores
+de conexion y los 4xx; con el circuito abierto el envio falla sin tocar la
+red y el mensaje vuelve por `.retry`. Con `SMTP_STARTTLS=true` exige TLS y
+verifica el certificado del servidor: si no ofrece STARTTLS, el envio falla
+y nunca baja a texto plano. Autentica con `AUTH PLAIN` solo si hay
+credenciales. No soporta TLS implicito (puerto 465); SES usa el 587 con
+STARTTLS.
+
+**Mailpit (local).** `docker compose up` levanta `axllent/mailpit` junto al
+servicio: el SMTP escucha en `mailpit:1025` solo dentro de la red interna
+`notification-internal` (no se publica al host) y la bandeja web en
+<http://127.0.0.1:8025>, publicada unicamente en el loopback porque los
+mails contienen codigos de un solo uso. Los mensajes viven en memoria.
+
+**Variables** (documentadas en `.env.example`)
+
+| Variable | Default | Nota |
+|---|---|---|
+| `EMAIL_REQUESTED_QUEUE` | `notification.email-requested.q` | Tiene que coincidir con la de Core |
+| `APP_ENV` | vacio | Con `production`, la configuracion rechaza `SMTP_STARTTLS` distinto de `true` |
+| `SMTP_HOST`, `SMTP_PORT` | `mailpit`, `1025` | |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | vacios | Secretos; se definen juntos o ninguno |
+| `SMTP_FROM` | `Vinculo Vial <no-responder@vinculovial.local>` | |
+| `SMTP_STARTTLS` | `false` | Obligatorio `true` con `APP_ENV=production` |
+| `SMTP_TIMEOUT` | `5s` | Formato de duracion de Go |
+| `SMTP_BREAKER_FAILURE_THRESHOLD` / `_WINDOW_SECONDS` / `_OPEN_SECONDS` | `5` / `60` / `30` | Igual que FCM |
+
+`user.sessions.revoked` con `reason: "PASSWORD_RESET"` (recuperacion de
+contraseña) se trata como cualquier otro motivo: el `reason` es informativo
+y solo importa el `actor`, cuyos device tokens se borran.
+
 ## Salud del servicio
 
 `GET /health` responde `200 OK` mientras el proceso este activo. Es una
@@ -170,8 +278,9 @@ broker caido no debe dejar a la instancia sin servir esas rutas.
 `GET /health/deps` expone el estado de todas las dependencias: la base y
 las conexiones a RabbitMQ (`rabbitmq_alert_created`,
 `rabbitmq_sessions_revoked`, `rabbitmq_alert_rejected`,
-`rabbitmq_alert_expired`, `rabbitmq_alert_seen` y
-`rabbitmq_alert_pending_delivered`, una por cada worker). Mismo formato de
+`rabbitmq_alert_expired`, `rabbitmq_alert_seen`,
+`rabbitmq_alert_pending_delivered` y `rabbitmq_email_requested`, una por
+cada worker). Mismo formato de
 respuesta que `/ready`: `200 OK` con `"status":"ready"` si todas estan
 arriba, o `503` con `"status":"degraded"` y el detalle por dependencia si
 alguna esta caida (la base o cualquiera de los workers). Usa `degraded` y
