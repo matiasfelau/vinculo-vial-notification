@@ -341,6 +341,17 @@ mails contienen codigos de un solo uso. Los mensajes viven en memoria.
 contraseña) se trata como cualquier otro motivo: el `reason` es informativo
 y solo importa el `actor`, cuyos device tokens se borran.
 
+## Release
+
+La imagen se publica en Docker Hub con `.github/workflows/publish.yml`, que se dispara con un tag de versión sobre `main`:
+
+```
+git checkout main && git pull
+git tag -a v0.4.0 -m "v0.4.0" && git push origin v0.4.0
+```
+
+El job `test` corre la compilación, el análisis estático y las pruebas unitarias y de integración. Si pasan, el job `publish` sube `felaufernandezbottaro/vinculo-vial-notification` con dos tags: la versión sin la `v` y `latest`. Un tag que no apunta a un commit de `main` no se publica. Requiere los secrets `DOCKERHUB_USERNAME` y `DOCKERHUB_TOKEN` en el repo.
+
 ## Salud del servicio
 
 `GET /health` responde `200 OK` mientras el proceso este activo. Es una
