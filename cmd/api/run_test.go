@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -244,6 +245,89 @@ func TestRun_DevuelveErrorSiLaMigracionFalla(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "no se pudo migrar el esquema") {
 		t.Fatalf("err = %v, se esperaba el error de migracion", err)
+	}
+}
+
+// notSQLPool oculta el *sql.DB subyacente: db.DB() no puede devolverlo.
+type notSQLPool struct{ gorm.ConnPool }
+
+func TestRun_DevuelveErrorSiNoPuedeObtenerElSQLDBSubyacente(t *testing.T) {
+	original := connectDB
+	defer func() { connectDB = original }()
+	connectDB = func(string, postgres.PoolConfig) (*gorm.DB, error) {
+		db, err := openInMemoryDB()
+		if err != nil {
+			return nil, err
+		}
+		// El AutoMigrate pasa (el pool sigue siendo un ConnPool valido), pero
+		// db.DB() ya no encuentra el *sql.DB. GORM prioriza Statement.ConnPool sobre
+		// ConnPool, asi que hay que reemplazar los dos.
+		pool := notSQLPool{db.ConnPool}
+		db.ConnPool = pool
+		db.Statement.ConnPool = pool
+		return db, nil
+	}
+	// Con tope de tiempo: si run no fallara, arrancaria el servidor y la prueba se colgaria.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	err := run(ctx, testConfig(t))
+
+	if err == nil || !strings.Contains(err.Error(), "no se pudo obtener el *sql.DB subyacente") {
+		t.Fatalf("err = %v, se esperaba el error del *sql.DB subyacente", err)
+	}
+}
+
+func TestExitCode_EsCeroSiElServicioSeApagaEnOrden(t *testing.T) {
+	if codigo := exitCode(func() error { return nil }); codigo != 0 {
+		t.Errorf("codigo de salida = %d, se esperaba 0", codigo)
+	}
+}
+
+func TestExitCode_EsUnoYLoguaElErrorSiElServicioFalla(t *testing.T) {
+	var logs strings.Builder
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	codigo := exitCode(func() error { return errors.New("fallo el arranque de prueba") })
+
+	if codigo != 1 {
+		t.Errorf("codigo de salida = %d, se esperaba 1", codigo)
+	}
+	if !strings.Contains(logs.String(), "fallo el arranque de prueba") {
+		t.Errorf("no se logueo el error de arranque: %q", logs.String())
+	}
+}
+
+func TestExecute_FallaSiLaConfiguracionEsInvalida(t *testing.T) {
+	// Un valor numerico que no lo es: config.Load rechaza la configuracion antes de
+	// que execute llegue a arrancar nada (ni siquiera intenta conectarse a la base).
+	t.Setenv("MAX_RETRIES", "no-es-un-numero")
+
+	err := execute()
+
+	if err == nil || !strings.Contains(err.Error(), "configuracion invalida") {
+		t.Fatalf("err = %v, se esperaba el error de configuracion invalida", err)
+	}
+	if !strings.Contains(err.Error(), "MAX_RETRIES") {
+		t.Errorf("err = %v, deberia nombrar la variable invalida", err)
+	}
+}
+
+func TestExecute_ConConfiguracionValidaDevuelveElErrorDeArranque(t *testing.T) {
+	// Sin tocar la red: la base falla al conectar, asi que el error tiene que venir
+	// de run, no de la configuracion.
+	original := connectDB
+	defer func() { connectDB = original }()
+	connectDB = func(string, postgres.PoolConfig) (*gorm.DB, error) {
+		return nil, errors.New("base inalcanzable")
+	}
+	testConfig(t) // deja SMTP_HOST y el resto del entorno listos para config.Load
+
+	err := execute()
+
+	if err == nil || !strings.Contains(err.Error(), "no se pudo conectar a la base de datos") {
+		t.Fatalf("err = %v, se esperaba el error de conexion a la base", err)
 	}
 }
 

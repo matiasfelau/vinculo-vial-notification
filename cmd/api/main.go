@@ -44,24 +44,39 @@ var exitFunc = os.Exit
 // memoria, sin un Postgres real.
 var connectDB = postgres.Connect
 
-func main() {
+func main() { exitFunc(exitCode(execute)) }
+
+// exitCode corre start y devuelve el codigo de salida del proceso: 0 si el
+// servicio se apago en orden y 1 si la configuracion o el arranque fallaron,
+// con el error en el log. Recibe la funcion para poder probar los dos
+// caminos; main queda en una linea.
+func exitCode(start func() error) int {
+	if err := start(); err != nil {
+		log.Print(err)
+		return 1
+	}
+	return 0
+}
+
+// execute carga la configuracion y corre el servicio hasta que llegue
+// SIGINT o SIGTERM.
+func execute() error {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("configuracion invalida: %v", err)
+		return fmt.Errorf("configuracion invalida: %w", err)
 	}
+	return runUntilSignal(cfg)
+}
 
+// runUntilSignal corre run con un contexto que se cancela con SIGINT o SIGTERM.
+func runUntilSignal(cfg *config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go func() {
-		// Una vez recibida la senial, se restaura el comportamiento por
-		// defecto: una segunda senial durante el apagado mata el proceso.
-		<-ctx.Done()
-		stop()
-	}()
+	// Una vez recibida la senial, se restaura el comportamiento por defecto:
+	// una segunda senial durante el apagado mata el proceso.
+	context.AfterFunc(ctx, stop)
 
-	if err := run(ctx, cfg); err != nil {
-		log.Fatal(err)
-	}
+	return run(ctx, cfg)
 }
 
 // run arma las dependencias, levanta la API HTTP y los workers, y
