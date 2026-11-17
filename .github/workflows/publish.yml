@@ -1,0 +1,101 @@
+name: Publicar imagen en Docker Hub
+
+# Se dispara con un tag de versión (v1.2.3) puesto sobre main. El job test corre las mismas
+# pruebas que el CI de PR; si fallan, no se publica nada.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: notification_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d notification_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Descargar codigo fuente
+        # fetch-depth 0: hace falta el historial de main para comprobar que el tag está sobre main.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verificar que el tag está sobre main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "El tag ${GITHUB_REF_NAME} no apunta a un commit de main: no se publica."
+            exit 1
+          fi
+
+      - name: Configurar Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Descargar y verificar dependencias
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Compilar
+        run: go build ./...
+
+      - name: Analisis estatico
+        run: |
+          go vet ./...
+          go vet -tags=integration ./...
+
+      - name: Ejecutar pruebas
+        run: go test ./... -race -count=1
+
+      - name: Ejecutar pruebas de integracion (Postgres real)
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/notification_test?sslmode=disable
+        run: go test -tags=integration -race -count=1 -run Integracion -v ./internal/repository/postgres/
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar codigo fuente
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Extraer versión del tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Iniciar sesión en Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Compilar y publicar la imagen
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            felaufernandezbottaro/vinculo-vial-notification:${{ steps.version.outputs.version }}
+            felaufernandezbottaro/vinculo-vial-notification:latest
