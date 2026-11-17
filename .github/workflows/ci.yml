@@ -94,16 +94,17 @@ jobs:
           # con "integration".
           GOFLAGS=-tags=integration gocover-cobertura < coverage.out > coverage.xml
 
-      # Se publica en el resumen del job. El gate sobre el total entra con el PR de cobertura.
-      - name: Publicar la cobertura total
+      # Segundo gate, sobre el total del repo: ninguna rama puede bajarlo de 85 %.
+      - name: Publicar la cobertura total y exigir el mínimo
         run: |
           total="$(go tool cover -func=coverage.out | awk '/^total:/ {print $NF}')"
           {
             echo "## Cobertura total"
             echo
-            echo "**${total}** de las sentencias (pruebas unitarias e integración unidas)."
+            echo "**${total}** de las sentencias (pruebas unitarias e integración unidas). Mínimo: ${COVERAGE_THRESHOLD} %."
           } >> "$GITHUB_STEP_SUMMARY"
           go tool cover -func=coverage.out > coverage-func.txt
+          awk -v t="${total%\%}" -v min="${COVERAGE_THRESHOLD}" 'BEGIN { exit (t >= min) ? 0 : 1 }'
 
       - name: Subir reportes de cobertura
         if: always()
