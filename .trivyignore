@@ -1,0 +1,7 @@
+# Excepciones de Trivy. Solo se admiten acá, y cada una lleva un comentario con el
+# motivo y la fecha de revisión, en la línea anterior:
+#
+#   # Motivo: <por qué no aplica o no tiene corrección> | Revisar: AAAA-MM-DD
+#   CVE-AAAA-NNNN
+#
+# Sin excepciones vigentes.
