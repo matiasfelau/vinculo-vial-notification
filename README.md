@@ -200,10 +200,23 @@ actualiza semanalmente `gomod`, `github-actions` y `docker`.
   usa `-coverpkg=./...`: un codigo cubierto desde otro paquete cuenta.
 - **Gate sobre el codigo nuevo:** `diff-cover` exige 85 % o mas de las lineas
   que el PR agrega o cambia respecto de la rama base.
-- **Cobertura total:** se publica en el resumen del job y como artefacto
-  `cobertura`, sin cortar. El gate sobre el total entra con el PR de cobertura.
+- **Gate sobre el total:** el job falla si la cobertura de sentencias baja de
+  85 %. Hoy mide 94,7 %. Se publica ademas en el resumen del job y como
+  artefacto `cobertura`. Ninguna rama puede bajar el total de ese minimo.
 - **Exclusiones:** ninguna. No hay codigo generado y el escrito a mano cuenta
-  entero.
+  entero. `main` queda en una linea (`exitFunc(exitCode(execute))`): `execute`
+  carga la configuracion y llama a `runUntilSignal`, que atrapa
+  SIGINT/SIGTERM y llama a `run(ctx, cfg)`, que arma las dependencias, levanta
+  la API y los workers, y se prueba con SQLite en memoria y un broker
+  inalcanzable. Lo que queda sin cubrir en el CI:
+  - la llamada de `main()` (termina en `os.Exit`);
+  - las fabricas de consumidores dentro de `run` y `dial` /
+    `realAMQPChannel` en `internal/delivery/worker`, que solo se ejecutan con
+    un RabbitMQ real (las cubren las suites de integracion del worker, que se
+    corren a mano);
+  - ramas defensivas que no se pueden provocar: fallas de `crypto/rand`,
+    errores de escritura sobre un `bytes.Buffer` y los `panic` de arranque por
+    plantillas o zona horaria embebidas invalidas.
 
 ### Seguridad
 

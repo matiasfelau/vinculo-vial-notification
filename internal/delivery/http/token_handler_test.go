@@ -191,3 +191,23 @@ func TestTokenHandler_DeleteAnteErrorInesperadoDeLaBase_DevuelveInternalServerEr
 		t.Fatalf("codigo de estado = %d, se esperaba %d. cuerpo: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
 	}
 }
+
+func TestTokenHandler_DeleteSinFCMTokenDevuelveBadRequestYNoBorraNada(t *testing.T) {
+	router, repo := newTestRouter()
+	owner := uuid.New()
+	_ = repo.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1"})
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/notifications/tokens", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-Id", owner.String())
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("codigo de estado = %d, se esperaba %d", rec.Code, http.StatusBadRequest)
+	}
+	found, _ := repo.FindByOwnerIDs(context.Background(), []uuid.UUID{owner})
+	if len(found) != 1 {
+		t.Fatalf("una baja invalida no debe borrar tokens, quedaron %d", len(found))
+	}
+}

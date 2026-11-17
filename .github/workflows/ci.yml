@@ -43,13 +43,13 @@ jobs:
 
     steps:
       - name: Descargar codigo fuente
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # diff-cover necesita el historial para comparar con la rama base del PR.
           fetch-depth: 0
 
       - name: Configurar Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -94,20 +94,21 @@ jobs:
           # con "integration".
           GOFLAGS=-tags=integration gocover-cobertura < coverage.out > coverage.xml
 
-      # Se publica en el resumen del job. El gate sobre el total entra con el PR de cobertura.
-      - name: Publicar la cobertura total
+      # Segundo gate, sobre el total del repo: ninguna rama puede bajarlo de 85 %.
+      - name: Publicar la cobertura total y exigir el mínimo
         run: |
           total="$(go tool cover -func=coverage.out | awk '/^total:/ {print $NF}')"
           {
             echo "## Cobertura total"
             echo
-            echo "**${total}** de las sentencias (pruebas unitarias e integración unidas)."
+            echo "**${total}** de las sentencias (pruebas unitarias e integración unidas). Mínimo: ${COVERAGE_THRESHOLD} %."
           } >> "$GITHUB_STEP_SUMMARY"
           go tool cover -func=coverage.out > coverage-func.txt
+          awk -v t="${total%\%}" -v min="${COVERAGE_THRESHOLD}" 'BEGIN { exit (t >= min) ? 0 : 1 }'
 
       - name: Subir reportes de cobertura
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cobertura
           path: |
@@ -140,10 +141,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Descargar código fuente
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configurar Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
