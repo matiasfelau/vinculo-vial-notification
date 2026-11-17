@@ -22,3 +22,8 @@ Thumbs.db
 .DS_Store
 clauderules
 CONTRATO-*.md
+
+# Reportes de cobertura del CI (ver el README)
+coverage.xml
+coverage-func.txt
+diff-cover.md

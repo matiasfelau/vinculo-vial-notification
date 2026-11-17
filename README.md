@@ -179,6 +179,72 @@ TEST_RABBITMQ_URL=amqp://guest:guest@localhost:5672/ \
 En el CI de este repo solo corre el paso de Postgres; estas dos suites se
 corren a mano.
 
+## CI
+
+`.github/workflows/ci.yml` corre en todo `pull_request` hacia `dev` o `main`
+(y en `push` a esas ramas). Tiene dos jobs:
+
+| Job | Que hace | Corta? |
+|---|---|---|
+| `build-and-test` | compila, `gofmt`, `go vet` (tambien con el tag `integration`), pruebas con `-race` y cobertura, integracion contra Postgres y `diff-cover` | Si |
+| `security` | `govulncheck`, Trivy `fs` y Semgrep | `govulncheck` y Trivy si; Semgrep no (informativo, pasa a gate en v0.14) |
+
+Las acciones de terceros estan fijadas por SHA de commit (la version va en un
+comentario) y el workflow declara `permissions: contents: read`. Dependabot
+actualiza semanalmente `gomod`, `github-actions` y `docker`.
+
+### Cobertura
+
+- **Un unico reporte** con las pruebas unitarias y las de integracion de
+  Postgres, unidos con `gocovmerge` y convertidos a Cobertura XML. Cada perfil
+  usa `-coverpkg=./...`: un codigo cubierto desde otro paquete cuenta.
+- **Gate sobre el codigo nuevo:** `diff-cover` exige 85 % o mas de las lineas
+  que el PR agrega o cambia respecto de la rama base.
+- **Cobertura total:** se publica en el resumen del job y como artefacto
+  `cobertura`, sin cortar. El gate sobre el total entra con el PR de cobertura.
+- **Exclusiones:** ninguna. No hay codigo generado y el escrito a mano cuenta
+  entero.
+
+### Seguridad
+
+`govulncheck` falla ante vulnerabilidades alcanzables y Trivy ante HIGH o
+CRITICAL con correccion disponible (tambien busca secretos y errores de
+configuracion). Las excepciones de Trivy viven solo en `.trivyignore`, cada una
+con su motivo y su fecha de revision; hoy no hay ninguna.
+
+La imagen corre como el usuario sin privilegios `65532:65532`, como el resto de
+los servicios. El archivo `firebase-credentials.json` que se monta en
+`/app` tiene que ser legible por ese usuario (por ejemplo, permisos `0644`).
+
+El CI instala la version de Go que dice `go.mod`, asi que esa linea tiene que
+estar en un parche sin vulnerabilidades de la biblioteca estandar: hoy es
+1.26.11.
+
+### Correr en local
+
+```bash
+# Cobertura (perfiles unitario y de integracion, unidos y convertidos a Cobertura XML)
+go test ./... -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage-unit.out
+TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/notification_test?sslmode=disable" \
+  go test -tags=integration -count=1 -run Integracion -covermode=atomic -coverpkg=./... \
+  -coverprofile=coverage-integration.out ./internal/repository/postgres/
+go install github.com/wadey/gocovmerge@b5bfa59ec0ad
+go install github.com/boumenot/gocover-cobertura@v1.5.0
+gocovmerge coverage-unit.out coverage-integration.out > coverage.out
+GOFLAGS=-tags=integration gocover-cobertura < coverage.out > coverage.xml
+go tool cover -func=coverage.out | tail -n 1
+
+# Gate sobre el codigo nuevo (con los cambios commiteados y origin/dev actualizado)
+pip install diff-cover==11.0.2
+diff-cover coverage.xml --compare-branch=origin/dev --fail-under=85
+
+# Seguridad
+go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+govulncheck ./...
+docker run --rm -v "$PWD:/src" aquasec/trivy:latest fs --scanners vuln,secret,misconfig \
+  --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /src/.trivyignore /src
+```
+
 ## Canal de email (US-13)
 
 Notification envia por email los codigos y avisos de Identity. Consume
