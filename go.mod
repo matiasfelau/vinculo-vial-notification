@@ -10,7 +10,7 @@ require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/rabbitmq/amqp091-go v1.16.0
 	google.golang.org/api v0.315.0
-	gorm.io/driver/postgres v1.6.2
+	gorm.io/driver/postgres v1.6.3
 	gorm.io/gorm v1.31.2
 )
 
