@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"io"
 	"log"
 	"time"
 
@@ -12,6 +13,17 @@ const (
 	minReconnectBackoff = 1 * time.Second
 	maxReconnectBackoff = 30 * time.Second
 )
+
+// connectBroker abre la conexion y el canal configurado de un
+// consumer. Se indirecciona para poder probar RunWithReconnect sin un
+// broker real.
+var connectBroker = func(amqpURL string, prefetch int) (io.Closer, AMQPChannel, error) {
+	conn, channel, err := dial(amqpURL, prefetch)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, channel, nil
+}
 
 // ConsumerFactory arma un Consumer sobre un canal AMQP recien
 // abierto. Se invoca en cada intento de conexion exitoso: nunca debe
@@ -40,7 +52,7 @@ func RunWithReconnect(ctx context.Context, amqpURL, queue string, prefetch int, 
 	defer setConnected(status, false)
 
 	for ctx.Err() == nil {
-		conn, channel, err := dial(amqpURL, prefetch)
+		conn, channel, err := connectBroker(amqpURL, prefetch)
 		if err != nil {
 			setConnected(status, false)
 			log.Printf("no se pudo conectar a rabbitmq para %s: %v", queue, err)

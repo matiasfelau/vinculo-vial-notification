@@ -21,6 +21,7 @@ type Config struct {
 	AlertExpiredQueue       string
 	AlertSeenQueue          string
 	PendingDeliveredQueue   string
+	EmailRequestedQueue     string
 	MaxRetries              int
 	FirebaseCredentialsPath string
 	FCMBatchSize            int
@@ -40,6 +41,12 @@ type Config struct {
 	HTTPReadTimeoutSeconds  int
 	HTTPWriteTimeoutSeconds int
 	HTTPIdleTimeoutSeconds  int
+
+	// AppEnv es el entorno de ejecucion (APP_ENV). Con "production" la
+	// configuracion rechaza los valores inseguros.
+	AppEnv string
+
+	SMTP SMTPConfig
 }
 
 // Load construye la configuracion a partir de las variables de entorno
@@ -121,6 +128,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	appEnv := os.Getenv("APP_ENV")
+	smtpConfig, err := loadSMTP(appEnv)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		Port:                    getEnv("PORT", "8080"),
 		DatabaseURL:             os.Getenv("DATABASE_URL"),
@@ -132,6 +145,7 @@ func Load() (*Config, error) {
 		AlertExpiredQueue:       getEnv("ALERT_EXPIRED_QUEUE", "notification.alert-expired.q"),
 		AlertSeenQueue:          getEnv("ALERT_SEEN_QUEUE", "notification.alert-seen.q"),
 		PendingDeliveredQueue:   getEnv("ALERT_PENDING_DELIVERED_QUEUE", "notification.alert-pending-delivered.q"),
+		EmailRequestedQueue:     getEnv("EMAIL_REQUESTED_QUEUE", "notification.email-requested.q"),
 		MaxRetries:              maxRetries,
 		FirebaseCredentialsPath: os.Getenv("FIREBASE_CREDENTIALS_PATH"),
 		FCMBatchSize:            fcmBatchSize,
@@ -151,6 +165,9 @@ func Load() (*Config, error) {
 		HTTPReadTimeoutSeconds:  httpReadTimeoutSeconds,
 		HTTPWriteTimeoutSeconds: httpWriteTimeoutSeconds,
 		HTTPIdleTimeoutSeconds:  httpIdleTimeoutSeconds,
+
+		AppEnv: appEnv,
+		SMTP:   smtpConfig,
 	}, nil
 }
 

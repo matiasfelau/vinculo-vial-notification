@@ -213,3 +213,71 @@ func TestSessionsRevokedHandler_SuperaMaxRetriesYFalloAlPublicarEnLaDLQ_NackSinR
 		t.Fatalf("Outcome = %v, se esperaba OutcomeNackNoRequeue cuando la dlq no confirma al superar maxRetries", outcome)
 	}
 }
+
+// US-13: Identity suma reason "PASSWORD_RESET" al revocar las sesiones tras
+// recuperar la contraseña. Notification lo trata igual que cualquier otro
+// motivo: el reason es informativo y no cambia el efecto (borrar los
+// tokens del actor) ni el resultado (ack, sin DLQ).
+func TestSessionsRevokedHandler_PasswordResetSeTrataIgualQueLosDemasMotivos(t *testing.T) {
+	for _, reason := range []string{"PASSWORD_RESET", "secuestro de sesion detectado", "LOGOUT_ALL", ""} {
+		t.Run("reason="+reason, func(t *testing.T) {
+			deviceTokens := memory.NewDeviceTokenRepository()
+			owner, other := uuid.New(), uuid.New()
+			_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1", UpdatedAt: time.Now()})
+			_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-2", UpdatedAt: time.Now()})
+			_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: other, FCMToken: "token-ajeno", UpdatedAt: time.Now()})
+
+			service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens))
+			deadLetters := &fakeDeadLetterPublisher{}
+			handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
+			body := []byte(`{
+				"eventId": "` + uuid.New().String() + `",
+				"eventType": "user.sessions.revoked",
+				"timestamp": "2026-01-01T00:00:00Z",
+				"producer": "vinculo-vial-identity",
+				"actor": "` + owner.String() + `",
+				"payload": {"reason": "` + reason + `"}
+			}`)
+
+			for i := 0; i < 2; i++ { // la segunda es un redelivery del mismo evento
+				if outcome := handler.Handle(context.Background(), body, 0); outcome != OutcomeAck {
+					t.Fatalf("entrega #%d: Outcome = %v, se esperaba OutcomeAck", i+1, outcome)
+				}
+			}
+
+			restantes, _ := deviceTokens.FindByOwnerIDs(context.Background(), []uuid.UUID{owner})
+			if len(restantes) != 0 {
+				t.Errorf("los tokens del actor deberian haberse borrado, se obtuvo: %+v", restantes)
+			}
+			ajenos, _ := deviceTokens.FindByOwnerIDs(context.Background(), []uuid.UUID{other})
+			if len(ajenos) != 1 {
+				t.Errorf("los tokens de otro usuario no deben tocarse, se obtuvo: %+v", ajenos)
+			}
+			if len(deadLetters.published) != 0 {
+				t.Errorf("no deberia haberse publicado nada a la dlq, se publicaron %d mensajes", len(deadLetters.published))
+			}
+		})
+	}
+}
+
+func TestSessionsRevokedHandler_PayloadQueNoEsUnObjeto_AckYDLQSinBorrarTokens(t *testing.T) {
+	deviceTokens := memory.NewDeviceTokenRepository()
+	owner := uuid.New()
+	_ = deviceTokens.Upsert(context.Background(), &domain.DeviceToken{ID: uuid.New(), OwnerID: owner, FCMToken: "token-1", UpdatedAt: time.Now()})
+
+	service := sessions.NewRevokeSessionsService(memory.NewUnitOfWork(memory.NewNotificationLogRepository(), deviceTokens))
+	deadLetters := &fakeDeadLetterPublisher{}
+	handler := NewSessionsRevokedHandler(service, deadLetters, testSessionsQueue, 3)
+
+	body := []byte(`{"eventId": "` + uuid.New().String() + `", "eventType": "user.sessions.revoked", "actor": "` + owner.String() + `", "payload": "no es un objeto"}`)
+	outcome := handler.Handle(context.Background(), body, 0)
+
+	if outcome != OutcomeAck {
+		t.Fatalf("Outcome = %v, se esperaba OutcomeAck una vez publicado a la dlq", outcome)
+	}
+	assertDeadLetterQueue(t, deadLetters, testSessionsQueue)
+	restantes, _ := deviceTokens.FindByOwnerIDs(context.Background(), []uuid.UUID{owner})
+	if len(restantes) != 1 {
+		t.Fatalf("un evento invalido no debe borrar tokens, quedaron %d", len(restantes))
+	}
+}

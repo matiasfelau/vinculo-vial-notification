@@ -150,8 +150,9 @@ func awaitDeadLetter(t *testing.T, channel *amqp.Channel, dlqQueue, eventID stri
 // runExhaustedRetriesScenario publica en workQueue un mensaje que el
 // handler no puede procesar (fallo transitorio) y verifica que agote
 // MAX_RETRIES recorriendo el ciclo completo (cola de trabajo -> retry
-// -> cola de trabajo) y termine en dlqQueue.
-func runExhaustedRetriesScenario(t *testing.T, workQueue, retryQueue, dlqQueue string, newHandler func(deadLetters deadLetterPublisher) messageHandler, body []byte, eventID string) {
+// -> cola de trabajo) y termine en dlqQueue. Devuelve el mensaje
+// tal como quedo en la DLQ.
+func runExhaustedRetriesScenario(t *testing.T, workQueue, retryQueue, dlqQueue string, newHandler func(deadLetters deadLetterPublisher) messageHandler, body []byte, eventID string) amqp.Delivery {
 	t.Helper()
 
 	url := integrationRabbitURL(t)
@@ -246,6 +247,8 @@ func runExhaustedRetriesScenario(t *testing.T, workQueue, retryQueue, dlqQueue s
 	if got := deathCount(last, workQueue); got != integrationMaxRetries {
 		t.Errorf("deathCount(%s) = %d, se esperaba MAX_RETRIES (%d)", workQueue, got, integrationMaxRetries)
 	}
+
+	return dead
 }
 
 func TestIntegracionAlertCreated_AgotaReintentosYTerminaEnLaDLQ(t *testing.T) {

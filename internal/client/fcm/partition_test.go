@@ -52,3 +52,13 @@ func sizes(batches [][]string) []int {
 	}
 	return result
 }
+
+func TestPartition_TamanoNoPositivoDejaTodosLosTokensEnUnSoloLote(t *testing.T) {
+	for _, size := range []int{0, -3} {
+		batches := partition(tokensOfSize(7), size)
+
+		if len(batches) != 1 || len(batches[0]) != 7 {
+			t.Fatalf("size=%d: se esperaba un unico lote de 7 tokens, se obtuvo %d lotes", size, len(batches))
+		}
+	}
+}

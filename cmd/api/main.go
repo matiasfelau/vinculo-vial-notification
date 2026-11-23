@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,10 +13,12 @@ import (
 	"time"
 
 	"github.com/matiasfelau/vinculo-vial-notification/internal/client/fcm"
+	smtpclient "github.com/matiasfelau/vinculo-vial-notification/internal/client/smtp"
 	deliveryhttp "github.com/matiasfelau/vinculo-vial-notification/internal/delivery/http"
 	deliveryworker "github.com/matiasfelau/vinculo-vial-notification/internal/delivery/worker"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/repository/postgres"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/dispatch"
+	emailservice "github.com/matiasfelau/vinculo-vial-notification/internal/service/email"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/sessions"
 	"github.com/matiasfelau/vinculo-vial-notification/internal/service/tokens"
 	"github.com/matiasfelau/vinculo-vial-notification/pkg/breaker"
@@ -29,35 +32,74 @@ const shutdownTimeout = 10 * time.Second
 // un worker que quedo colgado pese a los timeouts propios de sus
 // dependencias: sin este limite, un SIGTERM podria no completar
 // nunca.
-const workerShutdownTimeout = 15 * time.Second
+//
+// Es variable solo para que las pruebas de run puedan acortarla.
+var workerShutdownTimeout = 15 * time.Second
 
 // exitFunc se indirecciona para poder testear runWorker sin terminar
 // el proceso de pruebas.
 var exitFunc = os.Exit
 
-func main() {
+// connectDB se indirecciona para poder probar run con una base en
+// memoria, sin un Postgres real.
+var connectDB = postgres.Connect
+
+func main() { exitFunc(exitCode(execute)) }
+
+// exitCode corre start y devuelve el codigo de salida del proceso: 0 si el
+// servicio se apago en orden y 1 si la configuracion o el arranque fallaron,
+// con el error en el log. Recibe la funcion para poder probar los dos
+// caminos; main queda en una linea.
+func exitCode(start func() error) int {
+	if err := start(); err != nil {
+		log.Print(err)
+		return 1
+	}
+	return 0
+}
+
+// execute carga la configuracion y corre el servicio hasta que llegue
+// SIGINT o SIGTERM.
+func execute() error {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("configuracion invalida: %v", err)
+		return fmt.Errorf("configuracion invalida: %w", err)
 	}
+	return runUntilSignal(cfg)
+}
 
-	db, err := postgres.Connect(cfg.DatabaseURL, postgres.PoolConfig{
+// runUntilSignal corre run con un contexto que se cancela con SIGINT o SIGTERM.
+func runUntilSignal(cfg *config.Config) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	// Una vez recibida la senial, se restaura el comportamiento por defecto:
+	// una segunda senial durante el apagado mata el proceso.
+	context.AfterFunc(ctx, stop)
+
+	return run(ctx, cfg)
+}
+
+// run arma las dependencias, levanta la API HTTP y los workers, y
+// bloquea hasta que ctx se cancela o el servidor falla. Devuelve nil
+// tras un apagado ordenado.
+func run(ctx context.Context, cfg *config.Config) error {
+	db, err := connectDB(cfg.DatabaseURL, postgres.PoolConfig{
 		StatementTimeoutMS: cfg.DBStatementTimeoutMS,
 		MaxOpenConns:       cfg.DBMaxOpenConns,
 		MaxIdleConns:       cfg.DBMaxIdleConns,
 		ConnMaxLifetime:    time.Duration(cfg.DBConnMaxLifetimeMinutes) * time.Minute,
 	})
 	if err != nil {
-		log.Fatalf("no se pudo conectar a la base de datos: %v", err)
+		return fmt.Errorf("no se pudo conectar a la base de datos: %w", err)
 	}
 
 	if err := postgres.AutoMigrate(db); err != nil {
-		log.Fatalf("no se pudo migrar el esquema: %v", err)
+		return fmt.Errorf("no se pudo migrar el esquema: %w", err)
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		log.Fatalf("no se pudo obtener el *sql.DB subyacente: %v", err)
+		return fmt.Errorf("no se pudo obtener el *sql.DB subyacente: %w", err)
 	}
 
 	queryTimeout := time.Duration(cfg.DBQueryTimeoutSeconds) * time.Second
@@ -75,6 +117,7 @@ func main() {
 	expiredBrokerStatus := &deliveryworker.ConnectionStatus{}
 	seenBrokerStatus := &deliveryworker.ConnectionStatus{}
 	pendingDeliveredBrokerStatus := &deliveryworker.ConnectionStatus{}
+	emailRequestedBrokerStatus := &deliveryworker.ConnectionStatus{}
 
 	readinessHandler := deliveryhttp.NewReadinessHandler(sqlDB)
 	depsHealthHandler := deliveryhttp.NewDepsHealthHandler(sqlDB, map[string]deliveryhttp.ConnectionChecker{
@@ -84,6 +127,7 @@ func main() {
 		"rabbitmq_alert_expired":           expiredBrokerStatus,
 		"rabbitmq_alert_seen":              seenBrokerStatus,
 		"rabbitmq_alert_pending_delivered": pendingDeliveredBrokerStatus,
+		"rabbitmq_email_requested":         emailRequestedBrokerStatus,
 	})
 
 	router := deliveryhttp.NewRouter()
@@ -99,12 +143,9 @@ func main() {
 		IdleTimeout:  time.Duration(cfg.HTTPIdleTimeoutSeconds) * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	messagingClient, err := fcm.NewMessagingClient(context.Background(), cfg.FirebaseCredentialsPath)
 	if err != nil {
-		log.Fatalf("no se pudo inicializar el cliente de firebase: %v", err)
+		return fmt.Errorf("no se pudo inicializar el cliente de firebase: %w", err)
 	}
 	fcmBreaker := breaker.New(breaker.Config{
 		FailureThreshold: cfg.FCMBreakerFailureThreshold,
@@ -118,8 +159,27 @@ func main() {
 	notifyInboxService := dispatch.NewNotifyInboxService(unitOfWork, deviceTokenRepository, fcmDispatcher)
 	revokeSessionsService := sessions.NewRevokeSessionsService(unitOfWork)
 
+	smtpBreaker := breaker.New(breaker.Config{
+		FailureThreshold: cfg.SMTP.BreakerFailureThreshold,
+		Window:           time.Duration(cfg.SMTP.BreakerWindowSeconds) * time.Second,
+		OpenDuration:     time.Duration(cfg.SMTP.BreakerOpenSeconds) * time.Second,
+	})
+	emailSender, err := smtpclient.NewSender(smtpclient.Config{
+		Host:     cfg.SMTP.Host,
+		Port:     cfg.SMTP.Port,
+		Username: cfg.SMTP.Username,
+		Password: cfg.SMTP.Password,
+		From:     cfg.SMTP.From,
+		StartTLS: cfg.SMTP.StartTLS,
+		Timeout:  cfg.SMTP.Timeout,
+	}, smtpBreaker)
+	if err != nil {
+		return fmt.Errorf("no se pudo inicializar el cliente smtp: %w", err)
+	}
+	sendEmailService := emailservice.NewSendEmailService(unitOfWork, emailSender)
+
 	var workers sync.WaitGroup
-	workers.Add(6)
+	workers.Add(7)
 
 	go runWorker(&workers, "alert.created", func() {
 		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.AlertQueue, cfg.RabbitMQPrefetch, alertBrokerStatus, func(channel deliveryworker.AMQPChannel) *deliveryworker.Consumer {
@@ -142,6 +202,14 @@ func main() {
 			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
 			handler := deliveryworker.NewPendingDeliveredHandler(notifyInboxService, deadLetters, cfg.PendingDeliveredQueue, int64(cfg.MaxRetries))
 			return deliveryworker.NewConsumer(channel, cfg.PendingDeliveredQueue, handler)
+		})
+	})
+
+	go runWorker(&workers, "email.requested", func() {
+		deliveryworker.RunWithReconnect(ctx, cfg.RabbitMQURL, cfg.EmailRequestedQueue, cfg.RabbitMQPrefetch, emailRequestedBrokerStatus, func(channel deliveryworker.AMQPChannel) *deliveryworker.Consumer {
+			deadLetters := deliveryworker.NewAMQPDeadLetterPublisher(channel)
+			handler := deliveryworker.NewEmailRequestedHandler(sendEmailService, deadLetters, cfg.EmailRequestedQueue, int64(cfg.MaxRetries))
+			return deliveryworker.NewConsumer(channel, cfg.EmailRequestedQueue, handler)
 		})
 	})
 
@@ -182,17 +250,16 @@ func main() {
 	select {
 	case err := <-serverErrors:
 		if err != nil {
-			log.Fatalf("error al iniciar el servidor http: %v", err)
+			return fmt.Errorf("error al iniciar el servidor http: %w", err)
 		}
 	case <-ctx.Done():
-		stop()
 		log.Println("senial de apagado recibida, cerrando servidor http")
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Fatalf("error durante el apagado del servidor http: %v", err)
+			return fmt.Errorf("error durante el apagado del servidor http: %w", err)
 		}
 
 		log.Println("servidor http detenido correctamente")
@@ -202,9 +269,10 @@ func main() {
 	if !waitForWorkers(&workers, workerShutdownTimeout) {
 		log.Printf("los workers no terminaron dentro de %s, forzando la salida del proceso", workerShutdownTimeout)
 		exitFunc(1)
-		return
+		return nil
 	}
 	log.Println("workers detenidos correctamente")
+	return nil
 }
 
 // waitForWorkers espera a que wg termine, acotando la espera a
