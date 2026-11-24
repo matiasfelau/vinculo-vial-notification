@@ -8,7 +8,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
-	github.com/rabbitmq/amqp091-go v1.16.0
+	github.com/rabbitmq/amqp091-go v1.17.0
 	google.golang.org/api v0.315.0
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
